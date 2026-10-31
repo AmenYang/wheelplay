@@ -175,6 +175,10 @@ internal class LanWebServer(
                 "/text.js" -> "text.js" to "text/javascript; charset=utf-8"
                 "/app.js" -> "app.js" to "text/javascript; charset=utf-8"
                 "/desktop-input.js" -> "desktop-input.js" to "text/javascript; charset=utf-8"
+                "/webcodecs-player.js" -> "webcodecs-player.js" to "text/javascript; charset=utf-8"
+                "/wc" -> "wc.html" to "text/html; charset=utf-8"
+                "/wc.js" -> "wc.js" to "text/javascript; charset=utf-8"
+                "/wc.css" -> "wc.css" to "text/css; charset=utf-8"
                 "/style.css" -> "style.css" to "text/css; charset=utf-8"
                 "/browser-audio.js" -> "browser-audio.js" to "text/javascript; charset=utf-8"
                 "/browser-location.js" -> "browser-location.js" to "text/javascript; charset=utf-8"
@@ -436,6 +440,10 @@ internal class LanWebServer(
         private var rtcId = 0L
         private var rtcAnswered = false
 
+        /** Set when the page announced `?video=webcodecs`; it can decode Annex B with WebCodecs. */
+        private val webCodecsRequested = handshake.parameters["video"]?.firstOrNull() == "webcodecs"
+        private var wc: WebCodecsStream? = null
+
         private fun reconcileVideo() =
             synchronized(rtcLock) {
                 val source = WebSession.videoSource
@@ -462,6 +470,78 @@ internal class LanWebServer(
                 }
                 sender.frameAvailable()
             }
+
+        /**
+         * WebSocket + WebCodecs transport: CarPlay access units travel as binary WebSocket frames
+         * and the page decodes them with `VideoDecoder`. This is DashPlay/PlayPort's scheme, which
+         * skips RTP, DTLS/SRTP, the jitter buffer and the NACK loop of the WebRTC path.
+         */
+        private fun startWebCodecs() {
+            val media = WebSession.mediaSnapshot()
+            synchronized(rtcLock) {
+                reconcileVideo()
+                if (wc != null || ended.get() || !WebSession.videoActive) return
+                val source = rtcSource ?: return
+                val config = rtcConfig ?: return
+                if (media.source !== source || media.sourceState == "stopped") return
+                val id = ++rtcId
+                // Captured before the lock: the stream worker must never touch the WebSession
+                // monitor, or a service stop could deadlock against rtcLock.
+                val size = media.width to media.height
+                val stream =
+                    WebCodecsStream(
+                        source,
+                        config,
+                        dimensions = { size },
+                        write = { bytes, _ -> sender.videoPacket(bytes) },
+                        failure = { reason ->
+                            synchronized(rtcLock) { if (rtcId == id) stopWebCodecs(reason) }
+                        },
+                    )
+                if (!source.attach(stream, config)) {
+                    stream.close()
+                    return
+                }
+                wc = stream
+                stream.start()
+                reply(
+                    WebStreamSender.Control.RTC,
+                    JSONObject()
+                        .put("type", "wc-start")
+                        .put("id", id)
+                        .put("codec", config.codec.name)
+                        .put("sessionId", media.sessionId)
+                        .put("videoEpoch", media.videoEpoch)
+                        .toString(),
+                )
+            }
+        }
+
+        private fun stopWebCodecs(reason: String? = null) =
+            synchronized(rtcLock) {
+                val old = wc ?: return@synchronized
+                wc = null
+                rtcSource?.detach(old)
+                old.close()
+                if (reason != null) {
+                    reply(
+                        WebStreamSender.Control.RTC,
+                        JSONObject().put("type", "wc-stop").put("id", rtcId).put("reason", reason).toString(),
+                    )
+                }
+                // Images take over again now that nothing displays the encoded stream.
+                sender.frameAvailable()
+            }
+
+        /** Picks the transport the page asked for, as long as the configured mode allows it. */
+        private fun startVideoTransport() {
+            val technology = WebSession.videoSource?.technology
+            if (webCodecsRequested && technology != null && technology != StreamTechnology.JPEG) {
+                startWebCodecs()
+            } else {
+                startRtc()
+            }
+        }
 
         private fun startRtc() {
             // Service stop holds WebSession before closing clients. Never acquire that monitor
@@ -735,8 +815,14 @@ internal class LanWebServer(
                                     )
                                     .put(
                                         "transport",
-                                        if (rtcSource?.jpegNeeded == false) "webrtc" else "jpeg",
+                                        when {
+                                            wc != null -> "webcodecs"
+                                            rtcSource?.jpegNeeded == false -> "webrtc"
+                                            else -> "jpeg"
+                                        },
                                     )
+                                    .put("webcodecs", wc?.snapshot()?.let(::JSONObject))
+                                    .put("webcodecsEnabled", webCodecsRequested)
                                     .put(
                                         "fallback",
                                         rtcSource?.technology == StreamTechnology.WEBRTC &&
@@ -745,6 +831,16 @@ internal class LanWebServer(
                                     .toString(),
                             )
                         }
+                    }
+                    "wc-start" -> startVideoTransport()
+                    "wc-ready" -> {
+                        synchronized(rtcLock) { wc?.displayed() }
+                        sender.acknowledge()
+                    }
+                    "wc-keyframe" -> {
+                        // The page rebuilt its decoder: replay the codec description, then force an IDR.
+                        synchronized(rtcLock) { wc?.resendConfig() }
+                        WebSession.videoSource?.requestKeyframe(force = true)
                     }
                     "rtc-start" -> startRtc()
                     "rtc-answer" ->
@@ -854,6 +950,7 @@ internal class LanWebServer(
         private fun cleanup() {
             if (!ended.compareAndSet(false, true)) return
             media.close()
+            stopWebCodecs()
             stopRtc()
             synchronized(this@LanWebServer) {
                 if (viewer === this) {

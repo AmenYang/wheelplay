@@ -16,7 +16,7 @@ internal class RtcVideoStream(
     private val recovery: RtcRecoveryPolicy,
     private val offer: (String) -> Unit,
     private val failure: (retryable: Boolean) -> Unit,
-) : Closeable {
+) : VideoStreamConsumer {
     private val worker = Executors.newSingleThreadScheduledExecutor()
     private val closed = AtomicBoolean(false)
     private val lock = Any()
@@ -32,7 +32,7 @@ internal class RtcVideoStream(
     private var ptsOrigin: Long? = null
     private var blockedSince: Long? = null
     private var disconnectedSince: Long? = null
-    @Volatile var connected = false
+    @Volatile override var connected = false
         private set
     @Volatile var sentFrames = 0L
         private set
@@ -73,11 +73,11 @@ internal class RtcVideoStream(
     }
 
     fun answer(sdp: String) = execute { native?.answer(handle, sdp) }
-    fun displayed() {
+    override fun displayed() {
         if (connected && sentFrames > 0) { displayed = true; source.displayed(this) }
     }
 
-    fun frame(frame: CompressedVideoFrame, pts: Long) {
+    override fun frame(frame: CompressedVideoFrame, pts: Long) {
         if (closed.get() || !connected) return
         val idr = frame.isRandomAccess(config.codec)
         synchronized(lock) {

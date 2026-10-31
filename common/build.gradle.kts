@@ -3,6 +3,15 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// The WebRTC transport needs libdatachannel + Mbed TLS, which is a large native build. The
+// WebSocket/WebCodecs transport does not, so the native module is opt-in:
+//   ./gradlew :mobile:assembleDebug -PwheelplayRtc=true
+// Without it the app still runs; WebRTC mode falls back to images.
+val nativeRtc = providers.gradleProperty("wheelplayRtc")
+    .map { it.toBoolean() }
+    .orElse(false)
+    .get()
+
 android {
     namespace = "com.shilapi.xcertplay.host"
     compileSdk {
@@ -12,12 +21,16 @@ android {
     defaultConfig {
         minSdk = 28
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
-        externalNativeBuild { cmake { targets += "wheelplay-rtc" } }
+        if (nativeRtc) {
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+            externalNativeBuild { cmake { targets += "wheelplay-rtc" } }
+        }
     }
 
-    ndkVersion = "28.2.13676358"
-    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
+    if (nativeRtc) {
+        ndkVersion = "28.2.13676358"
+        externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

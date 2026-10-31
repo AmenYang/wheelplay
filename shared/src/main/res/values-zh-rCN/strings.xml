@@ -214,6 +214,7 @@
     <string name="ui_4_seconds_fast_fallback">4 秒 · 快速回退</string>
     <string name="ui_10_seconds_default">10 秒 · 默认</string>
     <string name="ui_30_seconds_keep_webrtc_longer">30 秒 · 优先保持 WebRTC</string>
+    <string name="ui_webcodecs_low_latency">WebSocket + WebCodecs（低延迟）</string>
     <string name="ui_webrtc_video_passthrough_automatic_fallback">WebRTC 视频直通（自动回退）</string>
     <string name="ui_jpeg_compatibility_mode">图片（兼容模式）</string>
     <string name="ui_start_the_web_listener_first">请先启动 Web 监听</string>

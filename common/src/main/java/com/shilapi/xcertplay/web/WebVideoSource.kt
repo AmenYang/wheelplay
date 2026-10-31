@@ -5,8 +5,21 @@ import com.shilapi.xcertplay.media.CompressedVideoFrame
 import com.shilapi.xcertplay.media.HeapVideoFrame
 import com.shilapi.xcertplay.media.EncodedVideoSink
 import com.shilapi.xcertplay.media.MediaCodecSupport
+import java.io.Closeable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * A transport that renders this source's access units in the browser.
+ *
+ * Two implementations exist: [RtcVideoStream] (WebRTC, loss tolerant) and [WebCodecsStream]
+ * (WebSocket + WebCodecs, lower latency). Only one may own a source at a time.
+ */
+internal interface VideoStreamConsumer : Closeable {
+    val connected: Boolean
+    fun frame(frame: CompressedVideoFrame, pts: Long)
+    fun displayed()
+}
 
 /** Owned by one projection video stream, including the decoder handoff and keyframe recovery. */
 internal class WebVideoSource(val technology: StreamTechnology) : EncodedVideoSink {
@@ -20,7 +33,7 @@ internal class WebVideoSource(val technology: StreamTechnology) : EncodedVideoSi
     }
     @Volatile var config: Config? = null
         private set
-    @Volatile private var consumer: RtcVideoStream? = null
+    @Volatile private var consumer: VideoStreamConsumer? = null
     @Volatile private var displayed = false
     private val recovery = ConcurrentHashMap<Int, () -> Unit>()
     private val lastRequest = AtomicLong(0)
@@ -38,7 +51,8 @@ internal class WebVideoSource(val technology: StreamTechnology) : EncodedVideoSi
         config = null
         lastConfig = null
         lastPts = null
-        if (technology != StreamTechnology.WEBRTC) return
+        // Images are the last resort; both streaming transports need the codec description.
+        if (technology == StreamTechnology.JPEG) return
         if (codec == VideoCodec.H265) {
             config = hevcConfig(type, data)
             if (config != null) lastConfig = data.copyOf()
@@ -81,18 +95,18 @@ internal class WebVideoSource(val technology: StreamTechnology) : EncodedVideoSi
         return Config(type, VideoCodec.H265, fmtp, parameters)
     }
 
-    @Synchronized fun attach(stream: RtcVideoStream, expected: Config): Boolean {
+    @Synchronized fun attach(stream: VideoStreamConsumer, expected: Config): Boolean {
         if (config !== expected) return false
         detach()
         consumer = stream
         return true
     }
 
-    @Synchronized fun displayed(stream: RtcVideoStream) {
+    @Synchronized fun displayed(stream: VideoStreamConsumer) {
         if (consumer === stream && stream.connected) displayed = true
     }
 
-    @Synchronized fun detach(stream: RtcVideoStream? = consumer) {
+    @Synchronized fun detach(stream: VideoStreamConsumer? = consumer) {
         if (consumer !== stream) return
         val wasDisplayed = displayed
         displayed = false

@@ -407,7 +407,7 @@ object AirPlayPersistence {
     fun loadStreamTechnology(context: Context): com.shilapi.xcertplay.web.StreamTechnology {
         val value = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_STREAM_TECHNOLOGY, null)
         return com.shilapi.xcertplay.web.StreamTechnology.entries.firstOrNull { it.name == value }
-            ?: com.shilapi.xcertplay.web.StreamTechnology.WEBRTC
+            ?: com.shilapi.xcertplay.web.StreamTechnology.WEBCODECS
     }
 
     fun saveStreamTechnology(context: Context, value: com.shilapi.xcertplay.web.StreamTechnology) {

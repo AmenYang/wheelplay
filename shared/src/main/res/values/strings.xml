@@ -214,6 +214,7 @@
     <string name="ui_4_seconds_fast_fallback">4 seconds · Fast fallback</string>
     <string name="ui_10_seconds_default">10 seconds · Default</string>
     <string name="ui_30_seconds_keep_webrtc_longer">30 seconds · Keep WebRTC longer</string>
+    <string name="ui_webcodecs_low_latency">WebSocket + WebCodecs (low latency)</string>
     <string name="ui_webrtc_video_passthrough_automatic_fallback">WebRTC video passthrough (automatic fallback)</string>
     <string name="ui_jpeg_compatibility_mode">Images (compatibility mode)</string>
     <string name="ui_start_the_web_listener_first">Start the Web listener first</string>

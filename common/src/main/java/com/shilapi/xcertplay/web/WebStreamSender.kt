@@ -34,6 +34,10 @@ internal class WebStreamSender(
     private val audio = java.util.ArrayDeque<Audio>()
     private val audioInFlight = linkedMapOf<Long, Long>()
     private var mediaBufferMillis = MediaAudioBuffer.DEFAULT_MILLIS
+    // WebCodecs transport: a shallow queue so a slow socket never turns into latency.
+    private val videos = java.util.ArrayDeque<Outgoing>()
+    private var videoDropped = 0L
+    private var videoSent = 0L
 
     fun configureAudioBuffer(millis: Int) = synchronized(lock) {
         mediaBufferMillis = MediaAudioBuffer.sanitize(millis)
@@ -85,6 +89,26 @@ internal class WebStreamSender(
 
     fun frameAvailable() = synchronized(lock) { scheduleLocked() }
 
+    /**
+     * Queues one WebCodecs packet. Returns false when the socket writer is already behind, which
+     * tells the caller to drop queued frames and resynchronise on the next IDR.
+     */
+    fun videoPacket(bytes: ByteArray): Boolean = synchronized(lock) {
+        if (closed) return false
+        if (videos.size >= VIDEO_QUEUE_DEPTH) {
+            videos.clear()
+            videoDropped++
+            return false
+        }
+        videos.addLast(Outgoing(WebSocketFrame(WebSocketFrame.OpCode.Binary, true, bytes)))
+        scheduleLocked()
+        return true
+    }
+
+    fun videoSnapshot(): Map<String, Any> = synchronized(lock) {
+        mapOf("queued" to videos.size, "sent" to videoSent, "dropped" to videoDropped)
+    }
+
     fun acknowledge() = synchronized(lock) {
         if (imageProtocol == 3) return@synchronized // Unversioned/stale ACKs cannot free v3 slots.
         imagesInFlight.clear()
@@ -131,7 +155,7 @@ internal class WebStreamSender(
 
     private fun scheduleLocked() {
         if (closed || scheduled) return
-        if (controls.isEmpty() && (audio.isEmpty() || audioInFlight.size >= 4)) {
+        if (videos.isEmpty() && controls.isEmpty() && (audio.isEmpty() || audioInFlight.size >= 4)) {
             if (nextImage() == null) return
         }
         scheduled = true
@@ -139,36 +163,55 @@ internal class WebStreamSender(
     }
 
     private fun drain() {
+        var lastVideo = false
         try {
             while (true) {
+                var sentVideo = false
                 val outgoing = synchronized(lock) {
                     if (closed) return
                     val control = controls.entries.firstOrNull()
-                    if (control != null) {
-                        controls.remove(control.key)
-                        control.value
-                    } else if (audio.isNotEmpty() && audioInFlight.size < 4) {
-                        audio.removeAll { now() - it.at > audioBudgetMillis(it) }
-                        if (audio.isEmpty()) { scheduled = false; scheduleLocked(); return }
-                        val next = audio.removeFirst()
-                        audioInFlight[next.sequence] = now()
-                        Outgoing(next.frame)
-                    } else {
-                        val frame = nextImage()
-                        if (frame == null) {
-                            // Events use the same lock: none can be lost while the writer goes idle.
-                            scheduled = false
-                            return
+                    // Video goes first, but yields to audio every other turn so sound never starves.
+                    val videoReady = videos.isNotEmpty() &&
+                        (!lastVideo || audio.isEmpty() || audioInFlight.size >= 4)
+                    val audioReady = audio.isNotEmpty() && audioInFlight.size < 4
+                    when {
+                        control != null -> {
+                            controls.remove(control.key)
+                            control.value
                         }
-                        imagesInFlight[ImageId(frame.sessionId, frame.videoEpoch, frame.sequence)] =
-                            ImageFlight(now(), frame.jpeg.size)
-                        sequence = frame.sequence
-                        Outgoing(WebSocketFrame(WebSocketFrame.OpCode.Binary, true,
-                            if (imageProtocol >= 2) VideoPacket.encode(frame, imageProtocol) else frame.jpeg))
+                        videoReady -> {
+                            videoSent++
+                            sentVideo = true
+                            videos.removeFirst()
+                        }
+                        audioReady -> {
+                            audio.removeAll { now() - it.at > audioBudgetMillis(it) }
+                            if (audio.isEmpty()) {
+                                scheduled = false
+                                scheduleLocked()
+                                return
+                            }
+                            val next = audio.removeFirst()
+                            audioInFlight[next.sequence] = now()
+                            Outgoing(next.frame)
+                        }
+                        else -> {
+                            val frame = nextImage() ?: run {
+                                // Events use the same lock: none can be lost while the writer goes idle.
+                                scheduled = false
+                                return
+                            }
+                            imagesInFlight[ImageId(frame.sessionId, frame.videoEpoch, frame.sequence)] =
+                                ImageFlight(now(), frame.jpeg.size)
+                            sequence = frame.sequence
+                            Outgoing(WebSocketFrame(WebSocketFrame.OpCode.Binary, true,
+                                if (imageProtocol >= 2) VideoPacket.encode(frame, imageProtocol) else frame.jpeg))
+                        }
                     }
                 }
                 write(outgoing.frame)
                 outgoing.afterSend()
+                lastVideo = sentVideo
             }
         } catch (_: Exception) {
             close()
@@ -182,9 +225,15 @@ internal class WebStreamSender(
             closed = true
             controls.clear()
             imagesInFlight.clear()
+            videos.clear()
             audio.clear(); audioInFlight.clear()
             // Shutdown under the lock prevents a racing event from scheduling after shutdown.
             executor.shutdownNow()
         }
+    }
+
+    private companion object {
+        /** Three frames is roughly one round trip of headroom at 60 fps; deeper just adds latency. */
+        const val VIDEO_QUEUE_DEPTH = 3
     }
 }
