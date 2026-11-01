@@ -2626,6 +2626,8 @@ class CarPlayHostActivity : ComponentActivity() {
         appendLog(requestSummary)
         appendLog(support.details)
         appendLog(effectiveSummary)
+        Log.i(TAG, requestSummary)
+        Log.i(TAG, effectiveSummary)
         return AirPlayConfig(
             deviceName = "WheelPlay",
             deviceId = DiPlayBootstrap.deviceId(airPlayIdentity),
@@ -3106,6 +3108,12 @@ class CarPlayHostActivity : ComponentActivity() {
         activeDisplaySize = size
         recordDetectedMaximum(size)
         updateResolutionMenu()
+        // The negotiated canvas decides letterboxing on the head unit; keep it readable off-device.
+        Log.i(
+            TAG,
+            "display size ${size.width}x${size.height} previous=" +
+                (previous?.let { "${it.width}x${it.height}" } ?: "none"),
+        )
         if (previous == null) {
             appendLog("Display detected: ${size.width}x${size.height}")
             maybeStartCarPlay()

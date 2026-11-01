@@ -1210,9 +1210,10 @@ if (typeof document !== 'undefined') {
           }
           $('stage').textContent = data.stage || t("web_waiting_for_iphone_video");
           rtc.progress(data.rtcFrames || 0);
-          // The transport is the single biggest factor in frame rate; show which one is live.
+          // The transport and the negotiated canvas together explain any letterboxing on screen.
           const transport = { webrtc: 'WebRTC', webcodecs: 'WebCodecs', jpeg: 'JPEG' }[data.transport];
-          $('transport-badge').textContent = transport || '';
+          const canvasSize = data.width && data.height ? ` · ${data.width}×${data.height}` : '';
+          $('transport-badge').textContent = transport ? transport + canvasSize : '';
           $('transport-badge').hidden = !transport;
           if (data.rtcAvailable && !rtcRequested && !rtc.active && typeof RTCPeerConnection !== 'undefined' &&
               (mode !== 'track-canvas' || processorSupported())) {
