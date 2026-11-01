@@ -48,6 +48,17 @@
 
 模式默认关闭，配置会保存。Root 检查结果仅在本次进程中有效，已启用 Root 方案时重新启动进程会自动重新检查；检查过程不阻塞普通 Web 监听。旧版本的模式与地址偏好保留；Web 域名和高位端口迁移到 Web 监听，旧低位端口迁移为映射端口，实际监听改用高位端口。Web 域名同时用于 HTTP 与 HTTPS，自定义证书需覆盖该域名。无 Root 时仍可使用普通局域网 HTTP/HTTPS 入口。
 
+## 无外网热点（联网检查应答）
+
+车机在**加入 Wi-Fi 之前**会先做联网检查，检查不通过就拒绝加入，也就走不到打开浏览器那一步。手机没有 SIM 卡、车上又没有可用的 Wi-Fi 时，热点一定没有上行，因此必须由手机代替车机回答这次检查。Root 热点路由启用后自动生效，无需额外开关。
+
+- **检查方式**：车机（ConnMan 栈）解析 `connman.vn.cloud.tesla.cn`、`connman.vn.tesla.services`、`www.tesla.cn`、`www.baidu.cn`、`www.baidu.com`、`www.qq.com`、`connectivitycheck.gstatic.com` 之一，再对它发 HTTP 请求，只读响应头里的 `X-ConnMan-Status: online`。
+- **DNS**：没有上行时系统自带的 `dnsmasq` 无法解析任何名字，所以 App 在 `15353` 上起一个应答器，只回答上面七个名字，均指向共享地址；其余名字返回 NXDOMAIN。Root 事务只在热点接口的 `PREROUTING` 上加 `--dport 53` 的 `REDIRECT`，**不碰 `OUTPUT`**，手机自己的解析和上网不受影响。热点下发的 DNS 就是手机地址，车机发往任何 DNS 服务器的查询都会被这条规则拦住。
+- **HTTP**：检查请求经共享地址的 `80 → 8080` 映射落到 Web 监听，`LanWebServer` 按 `Host` 头识别这七个名字，回 `200` 加 `X-ConnMan-Status: online`、`X-Cache: Hit from cloudfront`，正文与真实服务器相同。其它 `Host`（包括在车机上打开共享地址本身）仍走正常页面，互不干扰。
+- 名字列表、响应正文和响应头与 DashPlay 的 `scripts/onecloud/tesla_openwrt.py` 一致——那是目前唯一在实车上验证过的组合。车机只认这个头，所以真实服务器返回 `403` 时检查照样通过。
+- 该应答只让车机**认为**网络可用：手机没有上行，车机自带的地图、音乐仍然不能联网，CarPlay 画面和声音都在局域网内，不受影响。热点关闭、模式关闭或 App 退出时规则与应答器一并撤销。
+- 免 Root VPN 模式尚未接入这套应答，仍建议用 Root 热点路由。
+
 ## Root 路由和生命周期
 
 - 适配 VPN Hotspot 的下游策略路由、成对规则和逆序回滚机制，源码版本及修改见 [UPSTREAM.md](UPSTREAM.md)。共享范围是 **WheelPlay 的本地 HTTP/HTTPS 服务**，不提供手机第三方 VPN 的 Internet 转发。
