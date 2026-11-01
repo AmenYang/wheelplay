@@ -3423,7 +3423,12 @@ class CarPlayHostActivity : ComponentActivity() {
         message.contains("Turn on Wi-Fi", true) -> UiText(UiR.string.host_turn_on_wi_fi_in_this_device_s_system)
         message.contains("Allow precise Location", true) -> UiText(UiR.string.host_allow_precise_location_in_the_app_permissions)
         message.contains("Allow Nearby devices", true) -> UiText(UiR.string.host_allow_access_to_nearby_devices_in_the_app_permissions)
-        message.contains("createGroup failed", true) -> UiText(UiR.string.host_cannot_start_carplay_wi_fi_check_wi_fi_and)
+        // A running SoftAP leaves no room for a second AP role on most chips, so name the real fix
+        // instead of blaming Wi-Fi in general.
+        message.contains("createGroup failed", true) ->
+            if (com.shilapi.xcertplay.network.CarHotspotStatus.isEnabled(this) == true)
+                UiText(UiR.string.host_the_hotspot_blocks_wifi_direct)
+            else UiText(UiR.string.host_cannot_start_carplay_wi_fi_check_wi_fi_and)
         message.contains("needs a reset", true) -> UiText(UiR.string.host_the_previous_wi_fi_direct_connection_is_still_running)
         message.contains("socket", true) || message.contains("RFCOMM", true) -> UiText(UiR.string.host_cannot_connect_to_the_iphone_yet_unlock_it_and)
         message.contains("unsupported", true) || message.contains("not supported", true) -> UiText(UiR.string.host_this_device_may_not_support_wireless_carplay_try_a)

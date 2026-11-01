@@ -398,6 +398,7 @@
     <string name="host_turn_on_wi_fi_in_this_device_s_system">Turn on Wi-Fi in this device\'s system settings.</string>
     <string name="host_allow_precise_location_in_the_app_permissions">Allow precise location in the app permissions.</string>
     <string name="host_allow_access_to_nearby_devices_in_the_app_permissions">Allow access to nearby devices in the app permissions.</string>
+    <string name="host_the_hotspot_blocks_wifi_direct">The system hotspot is on, so Wi-Fi Direct cannot start. Set Settings → iPhone connection → Connection network to “Device hotspot” and enter the hotspot name and password. Retrying…</string>
     <string name="host_cannot_start_carplay_wi_fi_check_wi_fi_and">Cannot start CarPlay Wi-Fi. Check Wi-Fi and close other casting apps. Retrying…</string>
     <string name="host_the_previous_wi_fi_direct_connection_is_still_running">The previous Wi-Fi Direct connection is still running. Reset the connection in settings.</string>
     <string name="host_cannot_connect_to_the_iphone_yet_unlock_it_and">Cannot connect to the iPhone yet. Unlock it and check Bluetooth.</string>

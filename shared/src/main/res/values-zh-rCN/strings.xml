@@ -398,6 +398,7 @@
     <string name="host_turn_on_wi_fi_in_this_device_s_system">请在此设备的系统设置中开启 Wi-Fi。</string>
     <string name="host_allow_precise_location_in_the_app_permissions">请在应用权限中允许精确定位。</string>
     <string name="host_allow_access_to_nearby_devices_in_the_app_permissions">请在应用权限中允许访问附近设备。</string>
+    <string name="host_the_hotspot_blocks_wifi_direct">系统热点开着时无法再建立 Wi-Fi Direct 组。请在「设置 → iPhone 连接 → 连接网络」改用「设备热点」，并填入热点名称与密码。正在重试…</string>
     <string name="host_cannot_start_carplay_wi_fi_check_wi_fi_and">无法启动 CarPlay Wi-Fi，请检查 Wi-Fi 并关闭其他投屏应用。正在重试…</string>
     <string name="host_the_previous_wi_fi_direct_connection_is_still_running">之前的 Wi-Fi Direct 连接仍在运行，请在设置中重置连接。</string>
     <string name="host_cannot_connect_to_the_iphone_yet_unlock_it_and">暂时无法连接 iPhone，请解锁 iPhone 并检查蓝牙。</string>
