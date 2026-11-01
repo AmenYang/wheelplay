@@ -650,13 +650,21 @@ export function createRtcReceiver(createRenderer, {
       // ClientHello from newer Chrome versions. Passive is a standard answer role.
       await pc.setLocalDescription({ type: answer.type, sdp: answer.sdp.replace(/a=setup:active/g, 'a=setup:passive') });
       if (!current()) return;
-      const answerReady = () => {
-        if (!current() || pc.iceGatheringState !== 'complete') return;
+      const answerReady = (force = false) => {
+        if (!current()) return;
+        if (!force && pc.iceGatheringState !== 'complete') return;
         pc.onicegatheringstatechange = null;
+        if (!pc.localDescription) return;
         send({ type: 'rtc-answer', id, sdp: pc.localDescription.sdp });
       };
       if (pc.iceGatheringState === 'complete') answerReady();
-      else pc.onicegatheringstatechange = answerReady;
+      else {
+        pc.onicegatheringstatechange = answerReady;
+        // Some embedded Chromium builds never finish gathering, and the host cannot resolve an
+        // obfuscated *.local candidate anyway. Answer with whatever exists; the host learns the
+        // viewer's address from the incoming ICE check as a peer-reflexive candidate.
+        schedule(() => answerReady(true), 1200);
+      }
     } catch (error) {
       if (generation === token) fallback(error.message === 'processor-unsupported' ? error.message : 'connection-failed',
         error.message !== 'processor-unsupported' && isRtcErrorRetryable(error));
