@@ -41,5 +41,17 @@ internal class SessionLogFile(val file: File) : Closeable {
         const val MAX_BYTES = 512 * 1024L
         private val ARCHIVE_NAMES = listOf("previous.log") + (2..7).map { "previous-$it.log" }
         val REPORT_NAMES = ARCHIVE_NAMES.reversed() + "diplay.log"
+
+        // The head unit has no adb while it is in the car, so anything worth diagnosing has to
+        // reach this file. Web-service code appends through [report] to the session the host owns.
+        @Volatile private var active: SessionLogFile? = null
+
+        fun publish(log: SessionLogFile?) {
+            active = log
+        }
+
+        fun report(message: String) {
+            active?.append(message)
+        }
     }
 }

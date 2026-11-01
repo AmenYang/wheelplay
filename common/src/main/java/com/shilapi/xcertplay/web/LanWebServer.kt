@@ -16,6 +16,12 @@ import org.json.JSONObject
 
 private const val TAG = "WheelPlayWeb"
 
+/** Mirrors transport decisions into the host's session log: no adb exists on the road. */
+private fun diagnose(message: String) {
+    Log.i(TAG, message)
+    com.shilapi.xcertplay.SessionLogFile.report(message)
+}
+
 /** Same-origin HTTP assets and a single paired, backpressured video/control WebSocket. */
 internal class LanWebServer(
     private val context: Context,
@@ -563,7 +569,7 @@ internal class LanWebServer(
         /** Picks the transport the page asked for, as long as the configured mode allows it. */
         private fun startVideoTransport() {
             val technology = WebSession.videoSource?.technology
-            Log.i(TAG, "transport request: webcodecs=$webCodecsRequested technology=$technology")
+            diagnose("transport request: webcodecs=$webCodecsRequested technology=$technology")
             if (webCodecsRequested && technology != null && technology != StreamTechnology.JPEG) {
                 startWebCodecs()
             } else {
@@ -603,10 +609,7 @@ internal class LanWebServer(
                                             "${parts.getOrNull(4)}:${parts.getOrNull(5)}"
                                         }
                                         .toList()
-                                Log.i(
-                                    TAG,
-                                    "rtc-offer id=$id codec=${config.codec} candidates=$candidates",
-                                )
+                                diagnose("rtc-offer id=$id codec=${config.codec} candidates=$candidates")
                                 if (!ended.get() && rtc != null && rtcId == id)
                                     reply(
                                         WebStreamSender.Control.RTC,
@@ -890,10 +893,9 @@ internal class LanWebServer(
                             val sdp = data.getString("sdp")
                             val accepted =
                                 data.getLong("id") == rtcId && rtc != null && !rtcAnswered
-                            Log.i(
-                                TAG,
-                                "rtc-answer id=${data.getLong("id")} accepted=$accepted " +
-                                    "size=${sdp.length} candidates=" +
+                            diagnose(
+                                "rtc-answer id=${data.getLong("id")} accepted=$accepted size=${sdp.length} " +
+                                    "candidates=" +
                                     sdp.lineSequence().count { it.startsWith("a=candidate:") },
                             )
                             if (accepted) {
@@ -937,8 +939,7 @@ internal class LanWebServer(
                         synchronized(rtcLock) {
                             // A page that refuses the codec never answers, which otherwise looks
                             // exactly like a silent ICE stall.
-                            Log.w(
-                                TAG,
+                            diagnose(
                                 "rtc-fallback reason=${data.optString("reason")} " +
                                     "retryable=${data.optBoolean("retryable", true)}",
                             )

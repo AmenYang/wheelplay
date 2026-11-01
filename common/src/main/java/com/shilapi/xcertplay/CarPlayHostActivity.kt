@@ -739,6 +739,7 @@ class CarPlayHostActivity : ComponentActivity() {
         sessionLog?.append("Activity destroyed")
         sessionLog?.close()
         sessionLog = null
+        SessionLogFile.publish(null)
         super.onDestroy()
     }
 
@@ -3471,6 +3472,8 @@ class CarPlayHostActivity : ComponentActivity() {
             )
         }
         sessionLog = activeLog
+        // The web service cannot reach this activity, and there is no adb in the car.
+        SessionLogFile.publish(activeLog)
     }
 
     private fun refreshLogView(nowMillis: Long) {
