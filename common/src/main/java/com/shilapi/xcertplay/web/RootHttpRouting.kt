@@ -54,10 +54,20 @@ internal data class RootHttpPlan(
         fun ipRule(rule: String) =
             add(Command("$ip rule add $rule priority 9000", "$ip rule del $rule priority 9000"))
         fun filter(rule: String) = add(Command("iptables -w 2 -I $rule", "iptables -w 2 -D $rule"))
+        fun nat(rule: String) =
+            add(Command("iptables -w 2 -t nat -I $rule", "iptables -w 2 -t nat -D $rule"))
         add(Command("$ip address add $address/32 dev lo", "$ip address del $address/32 dev lo"))
         ipRule("to $address/32 lookup local")
         for (downstream in downstreams) {
             ipRule("from $address/32 to ${downstream.subnet} iif lo lookup 97")
+            // The car resolves its connectivity-check names through this hotspot; without an
+            // upstream the tethering server cannot answer, so hand DNS to our own responder.
+            nat(
+                "PREROUTING -i ${downstream.name} -p udp --dport 53 " +
+                    "-m comment --comment wheelplay-tesla-dns -j REDIRECT " +
+                    "--to-ports ${TeslaDnsResponder.PORT}"
+            )
+            filter("INPUT -i ${downstream.name} -p udp --dport ${TeslaDnsResponder.PORT} -j ACCEPT")
             for (listenerPort in listOfNotNull(port, httpsPort)) {
                 filter(
                     "INPUT -i ${downstream.name} -d $address/32 -p tcp --dport $listenerPort -j ACCEPT"

@@ -24,6 +24,20 @@ class RootHttpRoutingTest {
         assertFalse(commands.any { it.contains("FORWARD") || it.contains("MASQUERADE") || it.contains("0.0.0.0/0") })
     }
 
+    @Test
+    fun hotspotDnsGoesToTheCheckResponderAndNowhereElse() {
+        val commands = plan.commands().map { it.apply }
+        assertTrue(
+            commands.any {
+                it.contains("-t nat -I PREROUTING -i ap0 -p udp --dport 53") &&
+                    it.contains("--to-ports ${TeslaDnsResponder.PORT}")
+            }
+        )
+        // The phone's own resolver still needs :53, so never redirect the OUTPUT chain.
+        assertFalse(commands.any { it.contains("OUTPUT") && it.contains("--dport 53") })
+        assertTrue(plan.commands().any { it.revert.contains("--comment wheelplay-tesla-dns") })
+    }
+
     @Test fun failedAuthorizationIsNotAdvertisedOrRepeatedUntilAnExplicitRetry() {
         var attempts = 0
         val router = RootHttpRouting { attempts++; throw IOException("Root denied") }
@@ -178,7 +192,8 @@ class RootHttpRoutingTest {
 
     @Test fun mappedPortsAreScopedToCustomIpWithoutRequiringTheAddrtypeModule() = withShell(unsupportedAddrtype = true) { log, launch ->
         val mapped = plan.copy(httpsPort = 8443, httpMappingPort = 80, httpsMappingPort = 443)
-        val rules = mapped.commands().filter { it.apply.contains("-t nat") }
+        // Four port mappings; the DNS redirect also lives in nat but carries no destination.
+        val rules = mapped.commands().filter { it.apply.contains("--to-destination") }
         assertEquals(4, rules.size)
         assertTrue(rules.all { it.apply.contains("-d 100.96.0.1/32") && !it.apply.contains("addrtype") })
         assertTrue(rules.any { it.apply.contains("--dport 80") && it.apply.contains("--to-destination :8080") })

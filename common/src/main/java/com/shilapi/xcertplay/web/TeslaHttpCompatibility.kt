@@ -120,6 +120,7 @@ internal object TeslaHttpCompatibility {
             tethered = emptySet()
             status = TeslaHttpStatus()
             vpn.stop()
+            TeslaConnectivity.stop()
             refresh()
         }
     }
@@ -183,6 +184,7 @@ internal object TeslaHttpCompatibility {
             if (config?.enabled == true && config.mode == TeslaHttpMode.VPN) {
                 // Do not create a competing alias until the former Root transaction is cleaned up.
                 val cleanup = routing.reconcile(null)
+                TeslaConnectivity.stop()
                 main.post {
                     if (
                         revision.get() != version ||
@@ -248,6 +250,9 @@ internal object TeslaHttpCompatibility {
                     )
                 }
             val result = routing.reconcile(plan)
+            // The check responder has to outlive rule churn but never a torn-down plan: an orphan
+            // socket would keep answering for an address nothing routes to any more.
+            TeslaConnectivity.reconcile(plan != null && result.error == null, plan?.address.orEmpty())
             // Root consent can take time. Never publish completion for a stopped/reconfigured
             // owner.
             if (

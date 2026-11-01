@@ -93,6 +93,20 @@ internal class LanWebServer(
     }
 
     override fun serve(session: IHTTPSession): Response {
+        // The car's connectivity check arrives here because TeslaDnsResponder points those names at
+        // the shared address. Answer it before anything else so a hotspot without internet is
+        // accepted instead of refused.
+        if (TeslaChecks.matches(session.headers["host"]))
+            return newFixedLengthResponse(
+                    Response.Status.OK,
+                    "text/html",
+                    TeslaChecks.BODY,
+                )
+                .apply {
+                    addHeader("X-ConnMan-Status", "online")
+                    addHeader("X-Cache", "Hit from cloudfront")
+                    addHeader("Cache-Control", "no-store")
+                }
         if (session.uri == "/stream" && isWebsocketRequested(session)) {
             val origin = session.headers["origin"]
             val sameOrigin =
