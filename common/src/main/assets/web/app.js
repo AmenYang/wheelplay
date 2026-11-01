@@ -532,7 +532,7 @@ export function createRtcReceiver(createRenderer, {
     const current = id;
     if (current === null) return;
     close(); onStop(reason);
-    send({ type: 'rtc-fallback', id: current, ...(retryable ? {} : { retryable: false }) });
+    send({ type: 'rtc-fallback', id: current, reason, ...(retryable ? {} : { retryable: false }) });
   }
   async function receive(message) {
     if (message.type === 'rtc-stop') {

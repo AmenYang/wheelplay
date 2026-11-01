@@ -593,6 +593,20 @@ internal class LanWebServer(
                         recovery,
                         offer = { sdp ->
                             synchronized(rtcLock) {
+                                // Without STUN the offer only carries host candidates, so the
+                                // addresses here decide whether the page can reach us at all.
+                                val candidates =
+                                    sdp.lineSequence()
+                                        .filter { it.startsWith("a=candidate:") }
+                                        .map { line ->
+                                            val parts = line.split(' ')
+                                            "${parts.getOrNull(4)}:${parts.getOrNull(5)}"
+                                        }
+                                        .toList()
+                                Log.i(
+                                    TAG,
+                                    "rtc-offer id=$id codec=${config.codec} candidates=$candidates",
+                                )
                                 if (!ended.get() && rtc != null && rtcId == id)
                                     reply(
                                         WebStreamSender.Control.RTC,
@@ -873,9 +887,18 @@ internal class LanWebServer(
                     "rtc-start" -> startRtc()
                     "rtc-answer" ->
                         synchronized(rtcLock) {
-                            if (data.getLong("id") == rtcId && rtc != null && !rtcAnswered) {
+                            val sdp = data.getString("sdp")
+                            val accepted =
+                                data.getLong("id") == rtcId && rtc != null && !rtcAnswered
+                            Log.i(
+                                TAG,
+                                "rtc-answer id=${data.getLong("id")} accepted=$accepted " +
+                                    "size=${sdp.length} candidates=" +
+                                    sdp.lineSequence().count { it.startsWith("a=candidate:") },
+                            )
+                            if (accepted) {
                                 rtcAnswered = true
-                                rtc?.answer(data.getString("sdp"))
+                                rtc?.answer(sdp)
                             }
                         }
                     "rtc-feedback" ->
@@ -912,6 +935,13 @@ internal class LanWebServer(
                         }
                     "rtc-fallback" ->
                         synchronized(rtcLock) {
+                            // A page that refuses the codec never answers, which otherwise looks
+                            // exactly like a silent ICE stall.
+                            Log.w(
+                                TAG,
+                                "rtc-fallback reason=${data.optString("reason")} " +
+                                    "retryable=${data.optBoolean("retryable", true)}",
+                            )
                             if (data.getLong("id") == rtcId) stopRtc(data.optBoolean("retryable", true))
                         }
                     "input" -> {
