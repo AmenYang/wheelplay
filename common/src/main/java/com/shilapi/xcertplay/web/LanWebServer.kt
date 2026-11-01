@@ -2,6 +2,7 @@ package com.shilapi.xcertplay.web
 
 import android.content.Context
 import android.os.SystemClock
+import android.util.Log
 import com.shilapi.xcertplay.projection.ProjectionContact
 import com.shilapi.xcertplay.shared.R as UiR
 import fi.iki.elonen.NanoHTTPD
@@ -12,6 +13,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
+
+private const val TAG = "WheelPlayWeb"
 
 /** Same-origin HTTP assets and a single paired, backpressured video/control WebSocket. */
 internal class LanWebServer(
@@ -480,9 +483,16 @@ internal class LanWebServer(
             val media = WebSession.mediaSnapshot()
             synchronized(rtcLock) {
                 reconcileVideo()
-                if (wc != null || ended.get() || !WebSession.videoActive) return
-                val source = rtcSource ?: return
-                val config = rtcConfig ?: return
+                if (wc != null || ended.get() || !WebSession.videoActive) {
+                    Log.i(TAG, "webcodecs not started: running=${wc != null} ended=${ended.get()} active=${WebSession.videoActive}")
+                    return
+                }
+                val source = rtcSource
+                val config = rtcConfig
+                if (source == null || config == null) {
+                    Log.i(TAG, "webcodecs not started: no video source yet (${media.sourceState})")
+                    return
+                }
                 if (media.source !== source || media.sourceState == "stopped") return
                 val id = ++rtcId
                 // Captured before the lock: the stream worker must never touch the WebSession
@@ -499,11 +509,13 @@ internal class LanWebServer(
                         },
                     )
                 if (!source.attach(stream, config)) {
+                    Log.w(TAG, "webcodecs not started: the video source refused a second consumer")
                     stream.close()
                     return
                 }
                 wc = stream
                 stream.start()
+                Log.i(TAG, "webcodecs started: ${config.codec.name} ${size.first}x${size.second}")
                 reply(
                     WebStreamSender.Control.RTC,
                     JSONObject()
@@ -521,6 +533,7 @@ internal class LanWebServer(
             synchronized(rtcLock) {
                 val old = wc ?: return@synchronized
                 wc = null
+                Log.i(TAG, "webcodecs stopped: ${reason ?: "viewer gone"} ${old.snapshot()}")
                 rtcSource?.detach(old)
                 old.close()
                 if (reason != null) {
@@ -536,6 +549,7 @@ internal class LanWebServer(
         /** Picks the transport the page asked for, as long as the configured mode allows it. */
         private fun startVideoTransport() {
             val technology = WebSession.videoSource?.technology
+            Log.i(TAG, "transport request: webcodecs=$webCodecsRequested technology=$technology")
             if (webCodecsRequested && technology != null && technology != StreamTechnology.JPEG) {
                 startWebCodecs()
             } else {
@@ -924,7 +938,9 @@ internal class LanWebServer(
                     }
                     else -> error("Unknown message")
                 }
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                val rejected = message.textPayload.orEmpty().take(200)
+                Log.w(TAG, "control message rejected ($rejected), dropping the viewer", error)
                 disconnect(context.getString(UiR.string.ui_invalid_control_message))
             }
         }
@@ -942,6 +958,8 @@ internal class LanWebServer(
         }
 
         fun disconnect(reason: String) {
+            if (ended.get()) return
+            Log.i(TAG, "disconnecting the viewer: $reason")
             cleanup()
             // Force close: no blocking close handshake on the watchdog/service thread.
             runCatching { handshakeRequest.inputStream.close() }

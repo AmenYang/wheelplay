@@ -66,6 +66,7 @@ export function createWebCodecsPlayer({
   let lastSize = { width: 0, height: 0 };
   let lastArrival = 0;
   let dropped = 0;
+  let usesDescriptionPerDecoder = false;
 
   const supported = () => typeof VideoDecoder !== 'undefined';
 
@@ -84,6 +85,12 @@ export function createWebCodecsPlayer({
 
   function adopt(next, message) {
     decoder = next;
+    // With a description the decoder expects length-prefixed (AVCC) samples, so access units
+    // arriving as Annex B have to be rewritten; without one they are passed through untouched.
+    const usesDescription = message.codec === CODEC_H264
+      ? message.description.length > 4
+      : message.description.length > 0;
+    usesDescriptionPerDecoder = usesDescription;
     if (message.width > 0 && message.height > 0) resize(message.width, message.height);
     framesRendered = 0;
     armWatchdog();
@@ -168,12 +175,14 @@ export function createWebCodecsPlayer({
       dropped++;
       return;
     }
+    const data = usesDescriptionPerDecoder ? annexBToAvcc(message.data) : message.data;
+    if (data.length === 0) return;
     try {
       decoder.decode(
         new EncodedVideoChunk({
           type: message.keyframe ? 'key' : 'delta',
           timestamp: message.pts,
-          data: message.data,
+          data,
         }),
       );
       framesDecoded++;
@@ -278,6 +287,61 @@ export function avcCodecString(avcC) {
   if (!avcC || avcC.length < 4) return 'avc1.42E01E';
   const hex = value => value.toString(16).padStart(2, '0');
   return `avc1.${hex(avcC[1])}${hex(avcC[2])}${hex(avcC[3])}`;
+}
+
+/**
+ * Rewrites one Annex B access unit as 4-byte-length-prefixed NAL units (AVCC), which is what a
+ * `VideoDecoder` configured with a `description` expects. Ported from PlayPort's `protocol.ts`.
+ */
+export function annexBToAvcc(data) {
+  const units = [];
+  let index = 0;
+  while (index + 3 < data.length) {
+    let startLength = 0;
+    if (data[index] === 0 && data[index + 1] === 0 && data[index + 2] === 1) {
+      startLength = 3;
+    } else if (
+      index + 4 <= data.length &&
+      data[index] === 0 && data[index + 1] === 0 && data[index + 2] === 0 && data[index + 3] === 1
+    ) {
+      startLength = 4;
+    }
+    if (startLength === 0) {
+      index += 1;
+      continue;
+    }
+    const nalStart = index + startLength;
+    let nextStart = -1;
+    let scan = nalStart;
+    while (scan + 2 < data.length) {
+      if (data[scan] === 0 && data[scan + 1] === 0) {
+        if (data[scan + 2] === 1) {
+          nextStart = scan;
+          break;
+        }
+        if (scan + 3 < data.length && data[scan + 2] === 0 && data[scan + 3] === 1) {
+          nextStart = scan;
+          break;
+        }
+      }
+      scan += 1;
+    }
+    const nalEnd = nextStart === -1 ? data.length : nextStart;
+    if (nalEnd > nalStart) units.push({ offset: nalStart, length: nalEnd - nalStart });
+    index = nalEnd;
+  }
+  if (units.length === 0) return data;
+  let total = 0;
+  for (const unit of units) total += 4 + unit.length;
+  const output = new Uint8Array(total);
+  const view = new DataView(output.buffer);
+  let offset = 0;
+  for (const unit of units) {
+    view.setUint32(offset, unit.length);
+    output.set(data.subarray(unit.offset, unit.offset + unit.length), offset + 4);
+    offset += 4 + unit.length;
+  }
+  return output;
 }
 
 /**

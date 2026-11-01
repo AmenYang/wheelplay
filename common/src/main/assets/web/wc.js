@@ -18,6 +18,9 @@ let heartbeat = null;
 let hudTimer = null;
 let firstFrameSent = false;
 let closing = false;
+// Timestamp of the last `wc-start` request; the host answers every ping with a status, so a
+// blind re-request on each status would fire every two seconds.
+let lastStartAt = 0;
 
 // CarPlay resolution, used to turn pointer positions into normalized coordinates.
 let width = 0;
@@ -52,6 +55,26 @@ const player = createWebCodecsPlayer({
     setStatus('已连接（WebCodecs）');
   },
 });
+
+/**
+ * WebCodecs is only exposed in a secure context, and a LAN http:// address is not one. The host
+ * also serves the same page over HTTPS with its local certificate, so hop there before pairing.
+ */
+async function ensureSecureContext() {
+  if (window.isSecureContext) return true;
+  setMessage('正在切换到 HTTPS：WebCodecs 只能在安全上下文里使用。');
+  try {
+    const info = await (await fetch('/tls.json', { cache: 'no-store' })).json();
+    if (info.available && Number.isInteger(info.port) && info.port > 0) {
+      location.replace(`https://${location.hostname}:${info.port}/wc`);
+      return false;
+    }
+    setMessage('这个地址不是安全上下文，而且车机没有开 HTTPS。请在手机设置里启用 HTTPS 后再打开。');
+  } catch (_) {
+    setMessage('这个地址不是安全上下文：请用 https:// 地址打开本页，否则浏览器不会提供 WebCodecs。');
+  }
+  return false;
+}
 
 const audio = createBrowserAudio({
   send: payload => send(payload),
@@ -110,7 +133,9 @@ function open() {
     panel.hidden = true;
     stage.hidden = false;
     audio.attach();
-    send({ type: 'audio-route', playback: true, microphone: false, mediaBufferMillis: 300 });
+    // Audio routing is one-way: the host pushes `audio-route`, and the page only reports readiness
+    // through `audio-ready`. Sending `audio-route` here is an unknown control message and the host
+    // answers it by dropping the socket.
     send({ type: 'wc-start' });
     clearInterval(heartbeat);
     heartbeat = setInterval(() => send({ type: 'ping' }), 2000);
@@ -171,8 +196,12 @@ function handleControl(text) {
         height = data.height;
       }
       if (!data.webcodecs) {
-        // Either the host has not started yet, or its video source was re-created.
-        send({ type: 'wc-start' });
+        // Either the host has not started yet, or its video source was re-created. Only ask when a
+        // source can actually serve frames, and never more than once every two seconds.
+        if (data.sourceState !== 'stopped' && Date.now() - lastStartAt > 2000) {
+          lastStartAt = Date.now();
+          send({ type: 'wc-start' });
+        }
         setStatus(data.stage || '等待 iPhone 画面…');
       }
       break;
@@ -294,3 +323,7 @@ window.addEventListener('pagehide', () => {
   audio.close();
   player.close();
 });
+
+if (!(await ensureSecureContext())) {
+  connectButton.disabled = true;
+}
