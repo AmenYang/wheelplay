@@ -1210,6 +1210,10 @@ if (typeof document !== 'undefined') {
           }
           $('stage').textContent = data.stage || t("web_waiting_for_iphone_video");
           rtc.progress(data.rtcFrames || 0);
+          // The transport is the single biggest factor in frame rate; show which one is live.
+          const transport = { webrtc: 'WebRTC', webcodecs: 'WebCodecs', jpeg: 'JPEG' }[data.transport];
+          $('transport-badge').textContent = transport || '';
+          $('transport-badge').hidden = !transport;
           if (data.rtcAvailable && !rtcRequested && !rtc.active && typeof RTCPeerConnection !== 'undefined' &&
               (mode !== 'track-canvas' || processorSupported())) {
             rtcRequested = true; send({ type: 'rtc-start' });

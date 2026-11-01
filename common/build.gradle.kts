@@ -6,11 +6,21 @@ plugins {
 // The WebRTC transport needs libdatachannel + Mbed TLS, which is a large native build. The
 // WebSocket/WebCodecs transport does not, so the native module is opt-in:
 //   ./gradlew :mobile:assembleDebug -PwheelplayRtc=true
-// Without it the app still runs; WebRTC mode falls back to images.
+// Without it the app still runs, but two things are lost: WebRTC degrades to JPEG, and CarPlay
+// video frames are decrypted on the JVM instead of the native Mbed TLS path.
+// A fresh FetchContent checkout of Mbed TLS lacks its `framework` submodule and fails to configure,
+// so pre-clone both trees (including submodules) and point the build at them:
+//   -PwheelplayDatachannelSource=<libdatachannel> -PwheelplayMbedtlsSource=<mbedtls>
 val nativeRtc = providers.gradleProperty("wheelplayRtc")
     .map { it.toBoolean() }
     .orElse(false)
     .get()
+
+// libdatachannel + Mbed TLS take a long time to compile, once per ABI. A single-ABI build is
+// enough for a side-loaded debug APK: -PwheelplayRtc=true -PwheelplayAbi=arm64-v8a
+val nativeRtcAbis = providers.gradleProperty("wheelplayAbi")
+    .map { listOf(it) }
+    .getOrElse(listOf("arm64-v8a", "armeabi-v7a", "x86_64"))
 
 android {
     namespace = "com.shilapi.xcertplay.host"
@@ -22,8 +32,22 @@ android {
         minSdk = 28
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         if (nativeRtc) {
-            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
-            externalNativeBuild { cmake { targets += "wheelplay-rtc" } }
+            ndk { abiFilters += nativeRtcAbis }
+            externalNativeBuild {
+                cmake {
+                    targets += "wheelplay-rtc"
+                    // FetchContent clones full histories from GitHub, which is unreliable on a
+                    // slow link. -PwheelplayDatachannelSource / -PwheelplayMbedtlsSource point the
+                    // build at pre-cloned checkouts instead.
+                    fun localSource(name: String, property: String) {
+                        providers.gradleProperty(property).orNull?.let {
+                            arguments += "-DFETCHCONTENT_SOURCE_DIR_$name=$it"
+                        }
+                    }
+                    localSource("LIBDATACHANNEL", "wheelplayDatachannelSource")
+                    localSource("MBEDTLS", "wheelplayMbedtlsSource")
+                }
+            }
         }
     }
 
