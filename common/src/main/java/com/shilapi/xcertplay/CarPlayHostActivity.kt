@@ -3474,6 +3474,10 @@ class CarPlayHostActivity : ComponentActivity() {
         sessionLog = activeLog
         // The web service cannot reach this activity, and there is no adb in the car.
         SessionLogFile.publish(activeLog)
+        // Per-session counters plus a 5 s tick that writes load and image output into the log, so a
+        // drive can answer "was the head unit busy" without a cable.
+        SessionPerf.reset()
+        SessionPerf.start()
     }
 
     private fun refreshLogView(nowMillis: Long) {

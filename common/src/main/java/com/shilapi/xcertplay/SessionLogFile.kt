@@ -2,6 +2,9 @@ package com.shilapi.xcertplay
 
 import java.io.Closeable
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** Bounded, private diagnostics. Each write is redacted before touching storage. */
 internal class SessionLogFile(val file: File) : Closeable {
@@ -51,7 +54,13 @@ internal class SessionLogFile(val file: File) : Closeable {
         }
 
         fun report(message: String) {
-            active?.append(message)
+            // Web-service lines arrive from many threads and carry no clock of their own. Without a
+            // stamp they cannot be read against the host's own lines, which matters when the only
+            // question is "what happened in the ten seconds after the page loaded".
+            val log = active ?: return
+            val stamp =
+                SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(System.currentTimeMillis()))
+            log.append("$stamp  $message")
         }
     }
 }

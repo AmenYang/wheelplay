@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.view.Surface
 import com.shilapi.xcertplay.AirPlayPersistence
+import com.shilapi.xcertplay.SessionPerf
 import com.shilapi.xcertplay.media.AndroidMediaSink
 import com.shilapi.xcertplay.media.CompressedVideoFrame
 import com.shilapi.xcertplay.media.VideoCodec
@@ -49,6 +50,7 @@ internal class BrowserProjectionVideo(
                 encoding = { AirPlayPersistence.imageEncoding(app, WebSession.imageFormat) },
                 publish = { bytes, format, quality ->
                     if (!closed.get()) {
+                        SessionPerf.image(bytes.size)
                         WebSession.setVideoActive(generation, true)
                         WebSession.publish(generation, bytes, format, quality)
                         published = true
@@ -71,6 +73,7 @@ internal class BrowserProjectionVideo(
                             val (bytes, format) = imageEncoder.encode(options) { format, quality, output ->
                                 bitmap.compress(format.compression, quality, output)
                             }
+                            SessionPerf.image(bytes.size)
                             WebSession.publish(generation, bytes, format, options.quality)
                             // Track requested options: encoder-side WebP fallback must not trigger an encode loop.
                             lastImageOptions = options
