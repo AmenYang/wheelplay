@@ -23,23 +23,34 @@ private fun diagnose(message: String) {
 }
 
 /**
- * Chromium advertises host candidates as `<uuid>.local` names and the native ICE agent has no
- * mDNS resolver, so an answer that carries only such a candidate can never be reached. The page
- * runs on the head unit that opened this socket, so the socket's address is what the candidate
- * stood for; substitute it before the SDP reaches the native agent.
+ * The page advertises a host candidate for an address it believes describes itself: usually a
+ * `<uuid>.local` name the native agent cannot resolve, and on the automotive browser a real IPv4
+ * address that is not the one we can reach (it answers from a different interface or namespace).
+ * The one address we know is both real and reachable is the one this socket came from, and the
+ * page runs on that device — so every IPv4 candidate is rewritten to it, keeping the port.
  */
 internal fun usablePeer(peer: String?): String? =
     peer?.takeIf { it.isNotEmpty() && it != "::1" && it != "0.0.0.0" && !it.startsWith("127.") }
 
+internal fun subnetOf(address: String): String? {
+    val parts = address.split('.')
+    if (parts.size != 4) return null
+    if (parts.any { it.toIntOrNull() !in 0..255 }) return null
+    return parts.take(3).joinToString(".")
+}
+
 internal fun advertisePeerAddress(sdp: String, peer: String?): String {
     val usable = usablePeer(peer) ?: return sdp
-    if (!sdp.contains(".local")) return sdp
     return sdp.lineSequence().joinToString("\r\n") { line ->
-        if (!line.startsWith("a=candidate:") || !line.contains(".local")) line
-        else line.split(' ').toMutableList()
-            .takeIf { it.size > 5 }
-            ?.also { it[4] = usable }
-            ?.joinToString(" ") ?: line
+        if (!line.startsWith("a=candidate:")) return@joinToString line
+        val parts = line.split(' ').toMutableList()
+        if (parts.size <= 5) return@joinToString line
+        val address = parts[4]
+        // An IPv6 candidate cannot carry an IPv4 address, so it is left for the agent to discard.
+        val replaceable = address.endsWith(".local") || subnetOf(address) != null
+        if (!replaceable || address == usable) return@joinToString line
+        parts[4] = usable
+        parts.joinToString(" ")
     }
 }
 
@@ -493,9 +504,6 @@ internal class LanWebServer(
         private var rtcAnswered = false
         private var rtcAnswerCandidates = 0
 
-        /** /24 of the host's own advertised candidate; never a full address. */
-        private var rtcOfferSubnet: String? = null
-
         /** The head unit's own address; the page cannot learn it for us, Chromium hides it. */
         private val peerAddress = handshake.remoteIpAddress
 
@@ -647,13 +655,6 @@ internal class LanWebServer(
                                         }
                                         .toList()
                                 diagnose("rtc-offer id=$id codec=${config.codec} candidates=$candidates")
-                                // Only the /24 is kept: enough to tell "same subnet" from "wrong
-                                // network" without writing an address into the log.
-                                rtcOfferSubnet = sdp.lineSequence()
-                                    .filter { it.startsWith("a=candidate:") }
-                                    .mapNotNull { it.split(' ').getOrNull(4) }
-                                    .firstOrNull { !it.startsWith("127.") && it != "0.0.0.0" }
-                                    ?.substringBeforeLast('.', "")
                                 if (!ended.get() && rtc != null && rtcId == id)
                                     reply(
                                         WebStreamSender.Control.RTC,
@@ -944,17 +945,18 @@ internal class LanWebServer(
                             // point of the second answer.
                             val accepted = live && (!rtcAnswered ||
                                 candidates > rtcAnswerCandidates && rtc?.connected == false)
-                            // A page on another network cannot be reached at all, so report whether
-                            // its candidate sits on the same /24 as the one we advertised.
-                            val subnet = rtcOfferSubnet
-                            val near = subnet != null && sdp.lineSequence()
+                            // Does the page's own candidate sit on the link its socket came from?
+                            // No means the browser described itself with an address this phone
+                            // cannot reach, which is exactly what the rewrite exists for.
+                            val peerSubnet = usablePeer(peerAddress)?.let(::subnetOf)
+                            val near = peerSubnet != null && raw.lineSequence()
                                 .filter { it.startsWith("a=candidate:") }
                                 .mapNotNull { it.split(' ').getOrNull(4) }
-                                .any { it.substringBeforeLast('.', "") == subnet }
+                                .any { subnetOf(it) == peerSubnet }
                             diagnose(
                                 "rtc-answer id=$id accepted=$accepted size=${raw.length} " +
-                                    "rewritten=${sdp != raw} peer=${usablePeer(peerAddress) != null} " +
-                                    "${candidateSummary(sdp)} near=$near " +
+                                    "rewritten=${sdp != raw} peer=${peerSubnet != null} " +
+                                    "${candidateSummary(raw)} near=$near " +
                                     "previous=$rtcAnswerCandidates connected=${rtc?.connected}",
                             )
                             if (accepted) {
