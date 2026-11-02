@@ -58,11 +58,42 @@ class TeslaDnsResponderTest {
     }
 
     @Test
-    fun `an unknown name is refused so the client stops asking`() {
+    fun `an unresolvable name is refused with SERVFAIL rather than NXDOMAIN`() {
+        // Every client on the hotspot is served here, phones included. NXDOMAIN claims the domain
+        // does not exist, which the client caches and believes; SERVFAIL lets it fall back.
         val packet = query("captive.apple.com", 1)
-        val reply = TeslaDnsResponder("100.96.0.1").reply(packet, packet.size, address)
+        val reply =
+            TeslaDnsResponder("100.96.0.1", resolve = { null }).reply(packet, packet.size, address)
         assertNotNull(reply)
-        assertEquals(3, rcode(reply!!)) // NXDOMAIN
+        assertEquals(2, rcode(reply!!)) // SERVFAIL
+        assertEquals(0, answers(reply))
+    }
+
+    @Test
+    fun `an unknown name is forwarded to the device resolver`() {
+        val upstream = byteArrayOf(93, 184.toByte(), 216.toByte(), 34)
+        val asked = mutableListOf<String>()
+        val responder =
+            TeslaDnsResponder("100.96.0.1", resolve = { asked += it; upstream })
+        val packet = query("Example.COM", 1)
+        val reply = responder.reply(packet, packet.size, address)
+        assertNotNull(reply)
+        assertEquals(0, rcode(reply!!))
+        assertEquals(1, answers(reply))
+        assertArrayEquals(upstream, reply.copyOfRange(reply.size - 4, reply.size))
+        // One blocked lookup per question would hammer the resolver; the name is also normalised.
+        responder.reply(packet, packet.size, address)
+        assertEquals(listOf("example.com"), asked)
+    }
+
+    @Test
+    fun `a forwarded AAAA question is left to the upstream instead of guessed`() {
+        val responder = TeslaDnsResponder("100.96.0.1", resolve = { byteArrayOf(1, 2, 3, 4) })
+        val packet = query("example.com", 28)
+        val reply = responder.reply(packet, packet.size, address)
+        assertNotNull(reply)
+        // The hotspot hands out IPv4 only, so no data is the answer the client can act on.
+        assertEquals(0, rcode(reply!!))
         assertEquals(0, answers(reply))
     }
 
