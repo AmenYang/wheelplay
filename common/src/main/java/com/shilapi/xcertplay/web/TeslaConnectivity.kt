@@ -105,7 +105,7 @@ internal class TeslaDnsResponder(
         }
     }
 
-    private fun reply(query: ByteArray, length: Int, address: ByteArray): ByteArray? {
+    internal fun reply(query: ByteArray, length: Int, address: ByteArray): ByteArray? {
         if (length < 17) return null
         fun u8(at: Int) = query[at].toInt() and 0xFF
         fun u16(at: Int) = (u8(at) shl 8) or u8(at + 1)
@@ -131,9 +131,13 @@ internal class TeslaDnsResponder(
         }
         val questionEnd = offset + 4
         if (questionEnd > length) return null
-        if (u16(offset) != 1) return null // only A records are worth answering here
 
+        val type = u16(offset)
         val matched = name.toString().lowercase() in TeslaChecks.names
+        // Silence is not an option. iOS and Chromium ask AAAA before the A record, and a query that
+        // is dropped rather than answered costs a retransmit before anything else can proceed.
+        // A known name answers A with an address and every other type with NOERROR and no data.
+        val answered = matched && type == 1
         val out = ByteArrayOutputStream(64 + questionEnd)
         out.write(u8(0))
         out.write(u8(1))
@@ -144,10 +148,10 @@ internal class TeslaDnsResponder(
         out.write(0)
         out.write(1) // one question echoed back
         out.write(0)
-        out.write(if (matched) 1 else 0)
+        out.write(if (answered) 1 else 0)
         repeat(4) { out.write(0) } // no authority, no additional records
         out.write(query, 12, questionEnd - 12)
-        if (matched) {
+        if (answered) {
             out.write(0xC0)
             out.write(0x0C) // the name above
             out.write(0)
