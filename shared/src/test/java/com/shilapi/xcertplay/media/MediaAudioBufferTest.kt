@@ -23,7 +23,14 @@ class MediaAudioBufferTest {
     @Test
     fun `unknown delay falls back to the default`() {
         assertEquals(MediaAudioBuffer.DEFAULT_MILLIS, MediaAudioBuffer.sanitize(250))
-        assertEquals(57_600, MediaAudioBuffer.plan("media", 48_000, 2, 7_680, mediaMillis = 42).startBytes)
+        assertEquals(96_000, MediaAudioBuffer.plan("media", 48_000, 2, 7_680, mediaMillis = 42).startBytes)
+    }
+
+    @Test
+    fun `the default outlasts the measured wireless CarPlay delivery gap`() {
+        // 388 ms between bursts, measured on the Note 7 hosting CarPlay; the default has to exceed it.
+        assertEquals(500, MediaAudioBuffer.DEFAULT_MILLIS)
+        assertEquals(listOf(300, 500, 1000), MediaAudioBuffer.presets)
     }
 
     @Test
