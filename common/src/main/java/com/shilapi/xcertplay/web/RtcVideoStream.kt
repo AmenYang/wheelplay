@@ -46,11 +46,18 @@ internal class RtcVideoStream(
                     "offer" -> offer(value)
                     "connected" -> {
                         Log.i("WheelPlayRtc", "${config.codec} direct stream connected profile=${config.profile}")
+                        com.shilapi.xcertplay.SessionLogFile.report(
+                            "rtc-connected codec=${config.codec} profile=${config.profile} " +
+                                "sentFrames=$sentFrames"
+                        )
                         disconnectedSince = null
                         blockedSince = null
                         connected = true; source.requestKeyframe(force = true)
                     }
                     "disconnected" -> {
+                        com.shilapi.xcertplay.SessionLogFile.report(
+                            "rtc-disconnected sentFrames=$sentFrames displayed=$displayed"
+                        )
                         connected = false
                         synchronized(lock) { queue.invalidate(System.nanoTime()) }
                         if (disconnectedSince == null) {
@@ -172,6 +179,9 @@ internal class RtcVideoStream(
     private fun fail(reason: String, retryable: Boolean = true) {
         if (!closed.get()) {
             Log.w("WheelPlayRtc", "Using JPEG: $reason (grace=${recovery.graceMs}ms)")
+            com.shilapi.xcertplay.SessionLogFile.report(
+                "rtc-failed reason=$reason retryable=$retryable sentFrames=$sentFrames"
+            )
             failure(retryable)
         }
     }

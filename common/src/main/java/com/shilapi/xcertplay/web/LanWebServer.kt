@@ -22,6 +22,24 @@ private fun diagnose(message: String) {
     com.shilapi.xcertplay.SessionLogFile.report(message)
 }
 
+/**
+ * Chromium advertises host candidates as `<uuid>.local` names and the native ICE agent has no
+ * mDNS resolver, so an answer that carries only such a candidate can never be reached. The page
+ * runs on the head unit that opened this socket, so the socket's address is what the candidate
+ * stood for; substitute it before the SDP reaches the native agent.
+ */
+internal fun advertisePeerAddress(sdp: String, peer: String?): String {
+    if (peer.isNullOrEmpty() || peer == "::1" || peer.startsWith("127.") || peer == "0.0.0.0") return sdp
+    if (!sdp.contains(".local")) return sdp
+    return sdp.lineSequence().joinToString("\r\n") { line ->
+        if (!line.startsWith("a=candidate:") || !line.contains(".local")) line
+        else line.split(' ').toMutableList()
+            .takeIf { it.size > 5 }
+            ?.also { it[4] = peer }
+            ?.joinToString(" ") ?: line
+    }
+}
+
 /** Same-origin HTTP assets and a single paired, backpressured video/control WebSocket. */
 internal class LanWebServer(
     private val context: Context,
@@ -462,6 +480,10 @@ internal class LanWebServer(
         private val rtcRetry = RtcRetryPolicy()
         private var rtcId = 0L
         private var rtcAnswered = false
+        private var rtcAnswerCandidates = 0
+
+        /** The head unit's own address; the page cannot learn it for us, Chromium hides it. */
+        private val peerAddress = handshake.remoteIpAddress
 
         /** Set when the page announced `?video=webcodecs`; it can decode Annex B with WebCodecs. */
         private val webCodecsRequested = handshake.parameters["video"]?.firstOrNull() == "webcodecs"
@@ -888,21 +910,30 @@ internal class LanWebServer(
                         WebSession.videoSource?.requestKeyframe(force = true)
                     }
                     "rtc-start" -> startRtc()
-                    "rtc-answer" ->
+                    "rtc-answer" -> {
+                        val id = data.getLong("id")
+                        val raw = data.getString("sdp")
+                        val sdp = advertisePeerAddress(raw, peerAddress)
+                        val candidates = sdp.lineSequence().count { it.startsWith("a=candidate:") }
                         synchronized(rtcLock) {
-                            val sdp = data.getString("sdp")
-                            val accepted =
-                                data.getLong("id") == rtcId && rtc != null && !rtcAnswered
+                            val live = id == rtcId && rtc != null
+                            // The first answer wins, unless it arrived before the page's candidate
+                            // did: that one cannot be routed to, and replacing it is the whole
+                            // point of the second answer.
+                            val accepted = live && (!rtcAnswered ||
+                                candidates > rtcAnswerCandidates && rtc?.connected == false)
                             diagnose(
-                                "rtc-answer id=${data.getLong("id")} accepted=$accepted size=${sdp.length} " +
-                                    "candidates=" +
-                                    sdp.lineSequence().count { it.startsWith("a=candidate:") },
+                                "rtc-answer id=$id accepted=$accepted size=${raw.length} " +
+                                    "rewritten=${sdp != raw} candidates=$candidates " +
+                                    "previous=$rtcAnswerCandidates connected=${rtc?.connected}",
                             )
                             if (accepted) {
                                 rtcAnswered = true
+                                rtcAnswerCandidates = candidates
                                 rtc?.answer(sdp)
                             }
                         }
+                    }
                     "rtc-feedback" ->
                         synchronized(rtcLock) {
                             if (data.getLong("id") == rtcId && rtc != null) {
