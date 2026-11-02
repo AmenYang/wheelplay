@@ -710,8 +710,6 @@ if (typeof document !== 'undefined') {
   const touchSurface = $('touch-surface');
   // Read-only diagnostic snapshots; counters never include pairing credentials or video payloads.
   const rendererStats = { selectedMode: 'native', activeMode: 'waiting', renderedFps: null, renderedFrames: null, fallbackReason: null };
-  // Why the last WebRTC attempt gave up. Shown on the badge so the reason is readable in the car.
-  let rtcStopReason = null;
   const performanceStats = { source: null, transport: null, receiver: null, image: null, presentation: rendererStats };
   const webpSupport = probeWebp();
   Object.defineProperty(window, 'wheelplayStats', { configurable: true, get: () => JSON.parse(JSON.stringify(performanceStats)) });
@@ -1155,7 +1153,6 @@ if (typeof document !== 'undefined') {
         onResize: size => { if (socket === ws) showRtcSize(size); },
         onReady: size => {
           if (socket !== ws) return;
-          rtcStopReason = null;
           rendererStats.activeMode = mode; rendererStats.fallbackReason = null;
           rendererStats.renderedFrames = mode === 'native' ? null : 1;
           showRtcSize(size);
@@ -1163,7 +1160,6 @@ if (typeof document !== 'undefined') {
         onStop: reason => {
           if (socket !== ws) return;
           video = null; rtcFps = null; rendererStats.fallbackReason = reason; rendererStats.renderedFps = null;
-          rtcStopReason = reason;
           presentation.invalidate('rtc');
         },
         onStats: (fps, metrics) => {
@@ -1235,13 +1231,6 @@ if (typeof document !== 'undefined') {
           }
           $('stage').textContent = data.stage || t("web_waiting_for_iphone_video");
           rtc.progress(data.rtcFrames || 0);
-          // The transport, the negotiated canvas and the RTC fallback reason explain the frame
-          // rate on their own, and none of them need adb to read.
-          const transport = { webrtc: 'WebRTC', webcodecs: 'WebCodecs', jpeg: 'JPEG' }[data.transport];
-          const canvasSize = data.width && data.height ? ` · ${data.width}×${data.height}` : '';
-          const rtcNote = data.transport === 'webrtc' || !rtcStopReason ? '' : ` · ${rtcStopReason}`;
-          $('transport-badge').textContent = transport ? transport + canvasSize + rtcNote : '';
-          $('transport-badge').hidden = !transport;
           if (data.rtcAvailable && !rtcRequested && !rtc.active && typeof RTCPeerConnection !== 'undefined' &&
               (mode !== 'track-canvas' || processorSupported())) {
             rtcRequested = true; send({ type: 'rtc-start' });
