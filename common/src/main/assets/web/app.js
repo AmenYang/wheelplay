@@ -526,7 +526,7 @@ export function createRtcReceiver(createRenderer, {
     if (renderer) renderer.stop(); renderer = null;
     if (track) { track.onended = null; track.stop(); track = null; }
     previousStats = null; lastRendered = 0;
-    if (old) { old.ontrack = old.onconnectionstatechange = old.onicegatheringstatechange = null; old.close(); }
+    if (old) { old.ontrack = old.onconnectionstatechange = old.onicegatheringstatechange = old.oniceconnectionstatechange = null; old.close(); }
   }
   function fallback(reason = 'connection-failed', retryable = true) {
     const current = id;
@@ -640,6 +640,11 @@ export function createRtcReceiver(createRenderer, {
         track = event.track;
         track.onended = () => { if (current()) fallback('track-ended'); };
         renderer.start(track, event.streams);
+      };
+      // Mirror the page's ICE view to the host: the two agents settle independently, and only the
+      // pair of them together tells a blocked path apart from a handshake this page never finished.
+      pc.oniceconnectionstatechange = () => {
+        if (current()) send({ type: 'rtc-ice', id, state: pc.iceConnectionState });
       };
       await pc.setRemoteDescription({ type: 'offer', sdp: message.sdp });
       if (!current()) return;

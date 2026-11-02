@@ -69,6 +69,9 @@ internal class RtcVideoStream(
                         }
                     }
                     "keyframe" -> source.requestKeyframe()
+                    "ice" -> com.shilapi.xcertplay.SessionLogFile.report(
+                        "rtc-ice host state=$value sentFrames=$sentFrames"
+                    )
                     "failed" -> fail("native connection failed")
                 }
             } }

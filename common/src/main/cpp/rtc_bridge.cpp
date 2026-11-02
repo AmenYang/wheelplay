@@ -37,6 +37,18 @@ struct Peer {
     }
 };
 void check(int result) { if (result < 0) throw std::runtime_error("WebRTC operation failed: " + std::to_string(result)); }
+const char* iceStateName(rtcIceState state) {
+    switch (state) {
+        case RTC_ICE_NEW: return "new";
+        case RTC_ICE_CHECKING: return "checking";
+        case RTC_ICE_CONNECTED: return "connected";
+        case RTC_ICE_COMPLETED: return "completed";
+        case RTC_ICE_FAILED: return "failed";
+        case RTC_ICE_DISCONNECTED: return "disconnected";
+        case RTC_ICE_CLOSED: return "closed";
+    }
+    return "unknown";
+}
 void fail(JNIEnv* env, const std::exception& e) {
     env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), e.what());
 }
@@ -74,6 +86,11 @@ Java_com_shilapi_xcertplay_web_RtcNative_create(JNIEnv* env, jobject owner, jstr
             if (state == RTC_CONNECTED) static_cast<Peer*>(ptr)->emit("connected");
             if (state == RTC_DISCONNECTED) static_cast<Peer*>(ptr)->emit("disconnected");
             if (state == RTC_FAILED) static_cast<Peer*>(ptr)->emit("failed");
+        }));
+        // ICE settles or stalls long before DTLS does; without this a page whose candidate cannot
+        // be reached is indistinguishable from a handshake failure.
+        check(rtcSetIceStateChangeCallback(p->pc, [](int, rtcIceState state, void* ptr) {
+            static_cast<Peer*>(ptr)->emit("ice", iceStateName(state));
         }));
         const char* format = env->GetStringUTFChars(profile, nullptr);
         rtcTrackInit track{};

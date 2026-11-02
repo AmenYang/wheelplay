@@ -28,16 +28,27 @@ private fun diagnose(message: String) {
  * runs on the head unit that opened this socket, so the socket's address is what the candidate
  * stood for; substitute it before the SDP reaches the native agent.
  */
+internal fun usablePeer(peer: String?): String? =
+    peer?.takeIf { it.isNotEmpty() && it != "::1" && it != "0.0.0.0" && !it.startsWith("127.") }
+
 internal fun advertisePeerAddress(sdp: String, peer: String?): String {
-    if (peer.isNullOrEmpty() || peer == "::1" || peer.startsWith("127.") || peer == "0.0.0.0") return sdp
+    val usable = usablePeer(peer) ?: return sdp
     if (!sdp.contains(".local")) return sdp
     return sdp.lineSequence().joinToString("\r\n") { line ->
         if (!line.startsWith("a=candidate:") || !line.contains(".local")) line
         else line.split(' ').toMutableList()
             .takeIf { it.size > 5 }
-            ?.also { it[4] = peer }
+            ?.also { it[4] = usable }
             ?.joinToString(" ") ?: line
     }
+}
+
+/** Ports and shape only: addresses are redacted before they reach the log file anyway. */
+internal fun candidateSummary(sdp: String): String {
+    val lines = sdp.lineSequence().filter { it.startsWith("a=candidate:") }.toList()
+    val ports = lines.mapNotNull { it.split(' ').getOrNull(5)?.takeIf { port -> port.all(Char::isDigit) } }
+    val mdns = lines.count { it.split(' ').getOrNull(4)?.endsWith(".local") == true }
+    return "ports=$ports mdns=$mdns"
 }
 
 /** Same-origin HTTP assets and a single paired, backpressured video/control WebSocket. */
@@ -482,6 +493,9 @@ internal class LanWebServer(
         private var rtcAnswered = false
         private var rtcAnswerCandidates = 0
 
+        /** /24 of the host's own advertised candidate; never a full address. */
+        private var rtcOfferSubnet: String? = null
+
         /** The head unit's own address; the page cannot learn it for us, Chromium hides it. */
         private val peerAddress = handshake.remoteIpAddress
 
@@ -611,6 +625,7 @@ internal class LanWebServer(
                 if (media.source !== source || media.sourceState == "stopped") return
                 if (!rtcRetry.start()) return
                 rtcAnswered = false
+                rtcAnswerCandidates = 0
                 val id = ++rtcId
                 val recovery =
                     com.shilapi.xcertplay.AirPlayPersistence.loadRtcRecoveryPolicy(context)
@@ -632,6 +647,13 @@ internal class LanWebServer(
                                         }
                                         .toList()
                                 diagnose("rtc-offer id=$id codec=${config.codec} candidates=$candidates")
+                                // Only the /24 is kept: enough to tell "same subnet" from "wrong
+                                // network" without writing an address into the log.
+                                rtcOfferSubnet = sdp.lineSequence()
+                                    .filter { it.startsWith("a=candidate:") }
+                                    .mapNotNull { it.split(' ').getOrNull(4) }
+                                    .firstOrNull { !it.startsWith("127.") && it != "0.0.0.0" }
+                                    ?.substringBeforeLast('.', "")
                                 if (!ended.get() && rtc != null && rtcId == id)
                                     reply(
                                         WebStreamSender.Control.RTC,
@@ -922,9 +944,17 @@ internal class LanWebServer(
                             // point of the second answer.
                             val accepted = live && (!rtcAnswered ||
                                 candidates > rtcAnswerCandidates && rtc?.connected == false)
+                            // A page on another network cannot be reached at all, so report whether
+                            // its candidate sits on the same /24 as the one we advertised.
+                            val subnet = rtcOfferSubnet
+                            val near = subnet != null && sdp.lineSequence()
+                                .filter { it.startsWith("a=candidate:") }
+                                .mapNotNull { it.split(' ').getOrNull(4) }
+                                .any { it.substringBeforeLast('.', "") == subnet }
                             diagnose(
                                 "rtc-answer id=$id accepted=$accepted size=${raw.length} " +
-                                    "rewritten=${sdp != raw} candidates=$candidates " +
+                                    "rewritten=${sdp != raw} peer=${usablePeer(peerAddress) != null} " +
+                                    "${candidateSummary(sdp)} near=$near " +
                                     "previous=$rtcAnswerCandidates connected=${rtc?.connected}",
                             )
                             if (accepted) {
@@ -934,6 +964,13 @@ internal class LanWebServer(
                             }
                         }
                     }
+                    "rtc-ice" ->
+                        // The page's own view of the same handshake: comparing both sides tells a
+                        // one-way path apart from a handshake the page never finished.
+                        diagnose(
+                            "rtc-ice page id=${data.getLong("id")} state=${data.optString("state")} " +
+                                "answered=$rtcAnswered"
+                        )
                     "rtc-feedback" ->
                         synchronized(rtcLock) {
                             if (data.getLong("id") == rtcId && rtc != null) {
