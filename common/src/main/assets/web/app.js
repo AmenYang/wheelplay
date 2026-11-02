@@ -1009,8 +1009,11 @@ if (typeof document !== 'undefined') {
       if (!socket || socket.readyState !== WebSocket.OPEN || display.hidden) return;
       const rect = display.getBoundingClientRect();
       const zoom = ignoreZoomOption.checked ? window.visualViewport?.scale || 1 : 1;
-      const scale = (window.devicePixelRatio || 1) * zoom;
-      const size = browserViewportSize(rect.width * scale, rect.height * scale);
+      // Negotiate at the CSS layout size, not device pixels. A received video
+      // that matches its layout box is composited once by the browser; the old
+      // devicePixelRatio factor made the host re-encode at ~1.5x and the browser
+      // scale it back down into the CSS box, which read as soft/misaligned.
+      const size = browserViewportSize(rect.width * zoom, rect.height * zoom);
       if (!size) return;
       const { width, height } = size;
       const signature = `${width}x${height}`;
