@@ -319,7 +319,7 @@ class CarPlayHostActivity : ComponentActivity() {
     private var model = AirPlayPersistence.DEFAULT_MODEL
     private var simulatedManufacturerName = AirPlayPersistence.DEFAULT_SIMULATED_MANUFACTURER_NAME
     private var fps = AirPlayDisplaySettings.DEFAULT_FPS
-    private var streamTechnology = com.shilapi.xcertplay.web.StreamTechnology.WEBRTC
+    private var streamTechnology = com.shilapi.xcertplay.web.StreamTechnology.JPEG
     private var widthPhysicalMm = AirPlayDisplaySettings.DEFAULT_WIDTH_PHYSICAL_MM
     private var physicalSizeBasis = AirPlayDisplaySettings.DEFAULT_PHYSICAL_SIZE_BASIS
     private var maximumDetectedWidthPixels = 0
@@ -3474,10 +3474,6 @@ class CarPlayHostActivity : ComponentActivity() {
         sessionLog = activeLog
         // The web service cannot reach this activity, and there is no adb in the car.
         SessionLogFile.publish(activeLog)
-        // Per-session counters plus a 5 s tick that writes load and image output into the log, so a
-        // drive can answer "was the head unit busy" without a cable.
-        SessionPerf.reset()
-        SessionPerf.start()
     }
 
     private fun refreshLogView(nowMillis: Long) {

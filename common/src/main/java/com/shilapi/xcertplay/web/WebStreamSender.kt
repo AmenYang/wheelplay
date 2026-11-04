@@ -1,7 +1,6 @@
 package com.shilapi.xcertplay.web
 
 import android.os.SystemClock
-import com.shilapi.xcertplay.SessionLogFile
 import com.shilapi.xcertplay.media.MediaAudioBuffer
 import fi.iki.elonen.NanoWSD.WebSocketFrame
 import java.io.Closeable
@@ -35,9 +34,6 @@ internal class WebStreamSender(
     private val audio = java.util.ArrayDeque<Audio>()
     private val audioInFlight = linkedMapOf<Long, Long>()
     private var mediaBufferMillis = MediaAudioBuffer.DEFAULT_MILLIS
-    private var audioDropped = 0L
-    private var audioSent = 0L
-    private var audioStatsAt = 0L
     // WebCodecs transport: a shallow queue so a slow socket never turns into latency.
     private val videos = java.util.ArrayDeque<Outgoing>()
     private var videoDropped = 0L
@@ -64,21 +60,6 @@ internal class WebStreamSender(
 
     private fun audioBudgetMillis(frame: Audio) = if (frame.media) mediaBufferMillis + 200 else 100
 
-    /** Called under the lock, at most once every five seconds, and only when audio was lost. */
-    private fun reportAudioLocked() {
-        if (audioDropped == 0L) return
-        val at = now()
-        if (audioStatsAt == 0L) audioStatsAt = at
-        if (at - audioStatsAt < AUDIO_STATS_WINDOW_MS) return
-        SessionLogFile.report(
-            "web-audio dropped=$audioDropped sent=$audioSent budget=${mediaBufferMillis + 200}ms " +
-                "queued=${audio.size} inFlight=${audioInFlight.size}",
-        )
-        audioDropped = 0
-        audioSent = 0
-        audioStatsAt = at
-    }
-
     fun audio(packet: ByteArray, sequence: Long) = synchronized(lock) {
         if (!closed) {
             val next = audioFrame(packet, sequence)
@@ -87,7 +68,6 @@ internal class WebStreamSender(
             while (queuedMillis > audioBudgetMillis(next) && audio.count { it.stream == next.stream } > 1) {
                 val oldest = audio.first { it.stream == next.stream }
                 audio.remove(oldest); queuedMillis -= oldest.durationMillis
-                audioDropped++
             }
             // Duration is the main bound; this also caps pathological tiny PCM packets.
             while (audio.size > 128) audio.removeFirst()
@@ -205,11 +185,9 @@ internal class WebStreamSender(
                             videos.removeFirst()
                         }
                         audioReady -> {
-                            // Audio that waited longer than the budget is audible as a gap; count
-                            // it, because a silent sender-side drop looks exactly like radio jitter.
-                            val before = audio.size
+                            // Audio that waited longer than the budget is audible as a gap; drop it
+                            // so a single stalled packet never grows the queue into extra latency.
                             audio.removeAll { now() - it.at > audioBudgetMillis(it) }
-                            audioDropped += before - audio.size
                             if (audio.isEmpty()) {
                                 scheduled = false
                                 scheduleLocked()
@@ -217,8 +195,6 @@ internal class WebStreamSender(
                             }
                             val next = audio.removeFirst()
                             audioInFlight[next.sequence] = now()
-                            audioSent++
-                            reportAudioLocked()
                             Outgoing(next.frame)
                         }
                         else -> {
@@ -261,6 +237,5 @@ internal class WebStreamSender(
     private companion object {
         /** Three frames is roughly one round trip of headroom at 60 fps; deeper just adds latency. */
         const val VIDEO_QUEUE_DEPTH = 3
-        const val AUDIO_STATS_WINDOW_MS = 5_000L
     }
 }
