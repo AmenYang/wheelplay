@@ -72,6 +72,12 @@ internal object BydHudBridge {
 
     fun initialize(appContext: Context) = synchronized(lock) {
         if (context == null) context = appContext.applicationContext
+        // The SOME/IP HUD only exists on BYD head units. On anything else bindService() returns
+        // false forever, and the 300ms ticker would retry every beat and thrash the log.
+        if (!someIpInstalled(appContext)) {
+            Log.i(TAG, "SOME/IP service not installed; BYD HUD disabled")
+            return@synchronized
+        }
         bindLocked()
         if (!senderStarted) {
             senderStarted = true
@@ -158,6 +164,9 @@ internal object BydHudBridge {
             }.toMap()
         }.onFailure { Log.w(TAG, "HUD icons unavailable", it) }.getOrDefault(emptyMap())
     }
+
+    private fun someIpInstalled(context: Context): Boolean =
+        runCatching { context.packageManager.getPackageInfo(SOMEIP_PACKAGE, 0) }.isSuccess
 
     private fun bindLocked() {
         val appContext = context ?: return
