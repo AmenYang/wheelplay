@@ -58,11 +58,29 @@ TCP 已经负责重传，所以抖动被转成延迟而不是花屏；这也正�
 
 | 模式 | 传输 | 适用 |
 |---|---|---|
-| WebSocket + WebCodecs（默认） | 一路 TCP 二进制流 | Wi-Fi 稳定，追求最低延迟 |
-| WebRTC | 原生 RTP over DTLS/SRTP | Wi-Fi 抖动大、需要抗丢包 |
-| 图片 | JPEG/WebP 逐帧 | 兼容兜底 |
+| 图片（默认） | JPEG/WebP 逐帧 | 兼容兜底；不带原生库时唯一可用的一条 |
+| WebSocket + WebCodecs | 一路 TCP 二进制流 | Wi-Fi 稳定，追求最低延迟 |
+| WebRTC | 原生 RTP over DTLS/SRTP | Wi-Fi 抖动大、需要抗丢包；需 `-PwheelplayRtc=true` 自行编译 |
 
-浏览器带 `?video=webcodecs` 连接时才启用 WebCodecs 通道；主页面（`/`）仍然走原来的 WebRTC/图片逻辑，低延迟页面在 `/wc`。
+默认是图片而不是 WebCodecs：仓库默认构建不带 libdatachannel，WebRTC 会在运行时报 `native transport unavailable` 再回退，首次启动就该给一个真能用的模式。
+
+WebCodecs 通道只属于 `/wc` 页面，它连接时带 `?video=webcodecs`，主机端见到这个参数就直接起 WebCodecs，不再看设置的默认值。主页面（`/`）仍然走 WebRTC/图片逻辑。
+
+## 车机实测要点（Redmi Note 7 + Tesla 浏览器）
+
+这几条都是只有实车日志才会暴露的，改代码前先读一遍。
+
+**`description` 必须是 avcC/hvcC，不是 Annex B。** `VideoDecoderConfig.description` 要的是原始的 codec 配置记录；把给 RTP 打包用的 Annex B SPS/PPS 塞进去，`configure()` 直接抛错，画面永远出不来。`WebVideoSource.Config` 因此同时保存两份：`parameters`（Annex B，给 WebRTC）和 `codecData`（原始记录，给 WebCodecs）。
+
+**配置解析不能因为默认是图片就跳过。** `WebVideoSource.configure` 原本在 `StreamTechnology.JPEG` 时提前返回，结果 `/wc` 在图片模式下永远拿不到 codec 配置，请求打了也没用。现在无论默认模式是什么都解析。
+
+**触点 id 必须从 0 开始且连续。** `TouchLease` 只接受 `0 until maxContacts()`，CarPlay 源更严，只收 `0..1`。浏览器 `pointerdown` 的 `event.pointerId` 常常从 1 起跳甚至跳号，直接拿来当触点 id 会被拒，页面显示"画面还没准备好接收触摸"。要在 `wc.js` 里重新分配稠密的下标。
+
+**分辨率要按视口协商。** 页面不发 `viewport` 消息时，CarPlay 按默认 1280×720 出图，而车机视口是 1184×920，上下就有了黑边。`wc.js` 用 `devicePixelRatio` 折算物理像素后发 `viewport`，日志里能看到 `Starting CarPlay controller at 1184x920` 才算生效。同时 `#stage` 不要居中固定尺寸 canvas，改成全屏 `object-fit: contain`，并把指针坐标按同样的缩放和偏移映射回画面坐标。
+
+**令牌活不过页面。** token 只存在主机进程里，最多 12 小时；`/wc` 页面却可能连着好几天。重连时必须先用 remember 的设备凭据打 `/pair/resume` 换新令牌，否则主机重启后页面会拿着死令牌无限重试，只能手动刷新。
+
+**HUD 会挡住 CarPlay 的 home 按钮。** 左下角那个状态浮窗连上后显示 10 秒自动淡出，点击不再唤回。
 
 ## 原生依赖改为可选
 

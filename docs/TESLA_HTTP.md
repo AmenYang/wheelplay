@@ -59,6 +59,33 @@
 - 该应答只让车机**认为**网络可用：手机没有上行，车机自带的地图、音乐仍然不能联网，CarPlay 画面和声音都在局域网内，不受影响。热点关闭、模式关闭或 App 退出时规则与应答器一并撤销。
 - 免 Root VPN 模式尚未接入这套应答，仍建议用 Root 热点路由。
 
+### 无 SIM 卡运行
+
+上面这套应答是**无 SIM 卡也能用车机**的前提：手机没有蜂窝数据、车机又拒绝连没有外网的 Wi-Fi 时，只有让手机替车机回答联网检查，车机才肯加入热点。这部分能力沿用上游 DashPlay 的实现，本分支没有改动机制。
+
+本分支新增的只有 `TeslaChecks.dnsAnswers`：一组**只由 DNS 应答器**认领的额外域名，解析到共享地址。它们故意不放进 `TeslaChecks.matches`，所以 HTTP 层照常把 CarPlay 页面给过去，而不是回联网检查的空正文。存在的理由见下一节——浏览器要以 `https://` 打开页面才能用 WebCodecs，而正式证书需要域名。
+
+### 正式证书（Let's Encrypt + DuckDNS）
+
+`VideoDecoder` 只在安全上下文可用，局域网 `http://<IP>` 不算，所以车机上必须用 HTTPS 访问，且证书要被车机信任。本机实测的组合：
+
+1. 在一个 DuckDNS 子域上把 A 记录指向热点共享地址（实测 `amen811434.duckdns.org`），域名写进 `TeslaChecks.dnsAnswers`。
+2. 用 Let's Encrypt 签发该域名的证书（有效期 90 天）。DuckDNS 的 DNS-01 或带 `--standalone` 的 HTTP-01 都可以，因为域名此刻解析到手机自己。
+3. 导出的 PKCS#12 **必须设置非空密码**：Android 平台的 PKCS#12 provider 解密 PBES2 私钥时会拒绝空密码（报 `password empty`）。本分支把密码固定为 `wheelplay`（`LanTls.kt` 的 `customPassword`），导入路径和 adb 推送两条路都认这个密码。
+4. 推到应用私有目录：
+
+   ```sh
+   adb push server.p12 /sdcard/server.p12
+   adb shell "run-as moe.feng.wheelplay mkdir -p files/no_backup"
+   adb shell "run-as moe.feng.wheelplay cp /sdcard/server.p12 files/no_backup/browser-server-custom.p12"
+   ```
+
+   目录取自 `context.noBackupFilesDir`（`LanTls.customFile`）。debug 构建的包名多一个后缀，是 `moe.feng.wheelplay.debug`。读回来校验要用 `adb exec-out run-as ... cat`，`adb shell cat` 会做 CRLF 转换，字节数对不上。
+
+5. 车机浏览器打开 `https://amen811434.duckdns.org/wc`。这是正规 CA 签发的证书，车机不需要额外的信任操作，前提是车机系统时间正确。
+
+续期：证书 90 天到期，重新签发后替换同一个 p12 文件并重启 Web 服务即可，域名和密码都不用改。证书链过期时表现为浏览器直接拒绝连接，`LanTls` 的 `checkValidity()` 会让 HTTPS 监听起不来，日志里能看到异常——不是静默失败。
+
 ## Root 路由和生命周期
 
 - 适配 VPN Hotspot 的下游策略路由、成对规则和逆序回滚机制，源码版本及修改见 [UPSTREAM.md](UPSTREAM.md)。共享范围是 **WheelPlay 的本地 HTTP/HTTPS 服务**，不提供手机第三方 VPN 的 Internet 转发。
