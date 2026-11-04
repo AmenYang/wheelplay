@@ -27,7 +27,15 @@ internal class WebVideoSource(val technology: StreamTechnology) : EncodedVideoSi
     @Volatile private var processor = "JVM"
     fun performanceSnapshot() = performance.snapshot() + ("processor" to processor)
     private var lastPts: Long? = null
-    class Config(val type: Int, val codec: VideoCodec, val profile: String, val parameters: ByteArray) {
+    class Config(
+        val type: Int,
+        val codec: VideoCodec,
+        val profile: String,
+        /** Annex B SPS/PPS (H.264) or VPS/SPS/PPS (H.265) for the WebRTC RTP depacketizer. */
+        val parameters: ByteArray,
+        /** Raw avcC/hvcC record for the WebCodecs `VideoDecoder` description. */
+        val codecData: ByteArray,
+    ) {
         val fmtp get() = if (codec == VideoCodec.H264)
             "profile-level-id=$profile;packetization-mode=1;level-asymmetry-allowed=1" else profile
     }
@@ -51,8 +59,9 @@ internal class WebVideoSource(val technology: StreamTechnology) : EncodedVideoSi
         config = null
         lastConfig = null
         lastPts = null
-        // Images are the last resort; both streaming transports need the codec description.
-        if (technology == StreamTechnology.JPEG) return
+        // Images are the last resort; both streaming transports need the codec description. The
+        // codec configuration is parsed regardless of the configured technology so a WebCodecs
+        // request from the /wc page can attach even when the default is JPEG fallback.
         if (codec == VideoCodec.H265) {
             config = hevcConfig(type, data)
             if (config != null) lastConfig = data.copyOf()
@@ -61,7 +70,7 @@ internal class WebVideoSource(val technology: StreamTechnology) : EncodedVideoSi
         val (sps, pps) = MediaCodecSupport.avcParameterSets(data)
         if (sps.size < 4 || pps.isEmpty()) return
         val profile = sps.copyOfRange(1, 4).joinToString("") { "%02x".format(it.toInt() and 255) }
-        config = Config(type, codec, profile, byteArrayOf(0, 0, 0, 1) + sps + byteArrayOf(0, 0, 0, 1) + pps)
+        config = Config(type, codec, profile, byteArrayOf(0, 0, 0, 1) + sps + byteArrayOf(0, 0, 0, 1) + pps, data.copyOf())
         lastConfig = data.copyOf()
     }
 
@@ -92,7 +101,7 @@ internal class WebVideoSource(val technology: StreamTechnology) : EncodedVideoSi
         }
         if (!found.containsAll(listOf(32, 33, 34))) return null
         val fmtp = "profile-id=${profileByte and 31};tier-flag=${(profileByte ushr 5) and 1};level-id=$level;tx-mode=SRST"
-        return Config(type, VideoCodec.H265, fmtp, parameters)
+        return Config(type, VideoCodec.H265, fmtp, parameters, data.copyOf())
     }
 
     @Synchronized fun attach(stream: VideoStreamConsumer, expected: Config): Boolean {

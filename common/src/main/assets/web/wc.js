@@ -29,6 +29,22 @@ let height = 0;
 const pointers = new Map();
 let movePending = false;
 
+// Remembered device credentials, shared with the main page under the same storage key.
+const devicePreference = 'wheelplay.browserDevice';
+let deviceCredential = null;
+let storageAvailable = false;
+try {
+  const stored = window.localStorage.getItem(devicePreference);
+  storageAvailable = true;
+  if (stored) {
+    const device = JSON.parse(stored);
+    if (typeof device.id === 'string' && typeof device.secret === 'string' &&
+        device.id.length === 32 && device.secret.length === 32) {
+      deviceCredential = device;
+    }
+  }
+} catch (_) {}
+
 function setMessage(text) {
   message.textContent = text || '';
 }
@@ -99,22 +115,69 @@ function send(payload) {
   } catch (_) {}
 }
 
+async function pairApi(path, request = null) {
+  const headers = request?.token ? { 'X-Pair-Token': request.token } :
+    request?.device ? { 'X-Device-Id': request.device.id, 'X-Device-Secret': request.device.secret } :
+    { 'X-Pair-Code': request?.code };
+  const response = await fetch(`/pair/${path}`, { method: 'POST', headers, cache: 'no-store' });
+  if (!response.ok) {
+    const error = new Error(response.status === 401 ? 'expired' : 'unavailable');
+    error.status = response.status;
+    throw error;
+  }
+  return await response.json();
+}
+
 async function pair(code) {
-  const response = await fetch('/pair/code', {
-    method: 'POST',
-    headers: { 'x-pair-code': code },
-    cache: 'no-store',
-  });
-  if (response.status === 401) throw new Error('配对码不对，看一下手机主界面上显示的 6 位数字。');
-  if (!response.ok) throw new Error(`配对失败（HTTP ${response.status}）`);
-  const data = await response.json();
+  let data;
+  try {
+    data = await pairApi('code', { code });
+  } catch (error) {
+    if (error.status === 401) throw new Error('配对码不对，看一下手机主界面上显示的 6 位数字。');
+    throw new Error(`配对失败（HTTP ${error.status || ''}）`);
+  }
   if (!data.token) throw new Error('配对失败：没有拿到令牌');
   return data.token;
+}
+
+function remember(token) {
+  if (!storageAvailable) return;
+  pairApi('remember', { token })
+    .then(device => {
+      deviceCredential = device;
+      try { window.localStorage.setItem(devicePreference, JSON.stringify(device)); } catch (_) {}
+    })
+    .catch(() => {});
+}
+
+async function autoConnect() {
+  if (!deviceCredential) {
+    connectButton.disabled = false;
+    return;
+  }
+  connectButton.disabled = true;
+  setMessage('');
+  try {
+    const result = await pairApi('resume', { device: deviceCredential });
+    if (!result.token) throw new Error('no-token');
+    token = result.token;
+    open();
+  } catch (error) {
+    connectButton.disabled = false;
+    if (error.status === 401) {
+      deviceCredential = null;
+      try { window.localStorage.removeItem(devicePreference); } catch (_) {}
+      setMessage('记住的设备已失效，请输入配对码。');
+    } else {
+      setMessage('自动恢复配对失败，请输入配对码。');
+    }
+  }
 }
 
 function open() {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
   const url = `${scheme}://${location.host}/stream?token=${encodeURIComponent(token)}&video=webcodecs`;
+  closing = false;
   setStatus('连接中…');
   const ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
@@ -132,6 +195,9 @@ function open() {
     firstFrameSent = false;
     panel.hidden = true;
     stage.hidden = false;
+    showHud();
+    lastViewportSignature = '';
+    scheduleViewportReport();
     audio.attach();
     // Audio routing is one-way: the host pushes `audio-route`, and the page only reports readiness
     // through `audio-ready`. Sending `audio-route` here is an unknown control message and the host
@@ -175,10 +241,36 @@ function scheduleRetry() {
   const delay = Math.min(500 * 2 ** attempts, 5000);
   attempts += 1;
   setStatus('连接断开，重试中…');
-  retryTimer = setTimeout(() => {
+  retryTimer = window.setTimeout(async () => {
     retryTimer = null;
+    // A token lives in the host process and expires after 12 hours, but this page can stay open
+    // far longer than either. Re-derive one from the remembered device before every reconnect;
+    // otherwise a host restart leaves the page retrying a dead token forever.
+    if (deviceCredential) {
+      try {
+        const result = await pairApi('resume', { device: deviceCredential });
+        if (result.token) token = result.token;
+      } catch (error) {
+        if (error.status === 401) {
+          forgetDevice();
+          return;
+        }
+      }
+    }
     open();
   }, delay);
+}
+
+function forgetDevice() {
+  token = null;
+  deviceCredential = null;
+  try { window.localStorage.removeItem(devicePreference); } catch (_) {}
+  closing = true;
+  stage.hidden = true;
+  panel.hidden = false;
+  connectButton.disabled = false;
+  setStatus('');
+  setMessage('记住的设备已失效，请输入配对码。');
 }
 
 function handleControl(text) {
@@ -237,27 +329,64 @@ function sendTouch() {
 function pointFor(event) {
   const rect = canvas.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0 || width <= 0 || height <= 0) return null;
-  const x = (event.clientX - rect.left) / rect.width;
-  const y = (event.clientY - rect.top) / rect.height;
+  // The canvas is letterboxed by `object-fit: contain`; map into the visible picture area.
+  const scale = Math.min(rect.width / width, rect.height / height);
+  const w = width * scale, h = height * scale;
+  const x = (event.clientX - rect.left - (rect.width - w) / 2) / w;
+  const y = (event.clientY - rect.top - (rect.height - h) / 2) / h;
   if (x < -0.02 || x > 1.02 || y < -0.02 || y > 1.02) return null;
   return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
 }
 
 function showHud() {
-  hud.classList.remove('low');
+  hud.classList.remove('hidden');
   if (hudTimer !== null) window.clearTimeout(hudTimer);
-  hudTimer = window.setTimeout(() => hud.classList.add('low'), 4000);
+  hudTimer = window.setTimeout(() => hud.classList.add('hidden'), 10000);
+}
+
+// Negotiate the host's encode size to the stage's physical pixels, mirroring the main page, so
+// the CarPlay source is rendered at the head unit's own aspect ratio instead of letterboxing.
+let viewportTimer = null;
+let lastViewportSignature = '';
+
+function browserViewportSize(width, height) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  const ratio = width / height;
+  if (ratio < 0.5 || ratio > 4) return null;
+  const scale = Math.min(8192 / Math.max(width, height), Math.max(1, 320 / Math.min(width, height)));
+  const even = value => Math.round(value / 2) * 2;
+  const h = even(height * scale);
+  const w = Math.max(Math.ceil(h / 4) * 2, Math.min(h * 4, even(width * scale)));
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w < 320 || h < 320 || w > 8192 || h > 8192) return null;
+  return { width: w, height: h };
+}
+
+function scheduleViewportReport() {
+  if (viewportTimer !== null) return;
+  viewportTimer = window.setTimeout(() => {
+    viewportTimer = null;
+    if (!socket || socket.readyState !== WebSocket.OPEN || stage.hidden) return;
+    const rect = stage.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const size = browserViewportSize(rect.width * dpr, rect.height * dpr);
+    if (!size) return;
+    const signature = `${size.width}x${size.height}`;
+    if (signature === lastViewportSignature) return;
+    lastViewportSignature = signature;
+    send({ type: 'viewport', width: size.width, height: size.height });
+  }, 180);
 }
 
 canvas.addEventListener('pointerdown', event => {
   audio.unlock();
-  showHud();
   const point = pointFor(event);
   if (!point) return;
   try {
     canvas.setPointerCapture(event.pointerId);
   } catch (_) {}
-  pointers.set(event.pointerId, { id: event.pointerId, ...point });
+  const used = new Set([...pointers.values()].map(p => p.id));
+  let id = 0; while (used.has(id)) id++;
+  pointers.set(event.pointerId, { id, ...point });
   sendTouch();
   event.preventDefault();
 });
@@ -296,6 +425,9 @@ $('fullscreen').addEventListener('click', () => {
   else void stage.requestFullscreen?.().catch(() => {});
 });
 
+window.addEventListener('resize', scheduleViewportReport);
+window.visualViewport?.addEventListener('resize', scheduleViewportReport);
+
 $('connect-form').addEventListener('submit', async event => {
   event.preventDefault();
   const code = $('code').value.trim();
@@ -307,6 +439,7 @@ $('connect-form').addEventListener('submit', async event => {
   setMessage('');
   try {
     token = await pair(code);
+    remember(token);
     open();
   } catch (error) {
     setMessage(error.message || String(error));
@@ -326,4 +459,6 @@ window.addEventListener('pagehide', () => {
 
 if (!(await ensureSecureContext())) {
   connectButton.disabled = true;
+} else {
+  autoConnect();
 }

@@ -516,6 +516,10 @@ internal class LanWebServer(
                 val source = WebSession.videoSource
                 if (rtcSource !== source || rtcConfig !== source?.config) {
                     stopRtc()
+                    // A display-size renegotiation recreates the source; the running WebCodecs
+                    // stream is attached to the old one and must be torn down so the page
+                    // re-requests `wc-start`.
+                    stopWebCodecs()
                     rtcSource = source
                     rtcConfig = source?.config
                     rtcRetry.reset()
@@ -614,7 +618,9 @@ internal class LanWebServer(
         private fun startVideoTransport() {
             val technology = WebSession.videoSource?.technology
             diagnose("transport request: webcodecs=$webCodecsRequested technology=$technology")
-            if (webCodecsRequested && technology != null && technology != StreamTechnology.JPEG) {
+            // The /wc page explicitly asked for WebCodecs; honour that request regardless of the
+            // configured default, which only picks between WebRTC and JPEG fallback on the main page.
+            if (webCodecsRequested) {
                 startWebCodecs()
             } else {
                 startRtc()

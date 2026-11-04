@@ -65,7 +65,8 @@ internal class WebCodecsStream(
 
     private fun sendConfig() {
         val (width, height) = dimensions()
-        write(WebCodecsWire.config(config.type, config.codec, width, height, config.parameters), true)
+        // WebCodecs wants the raw avcC/hvcC record as the decoder description, not Annex B.
+        write(WebCodecsWire.config(config.type, config.codec, width, height, config.codecData), true)
     }
 
     override fun frame(frame: CompressedVideoFrame, pts: Long) {

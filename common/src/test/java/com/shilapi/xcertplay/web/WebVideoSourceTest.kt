@@ -29,8 +29,10 @@ class WebVideoSourceTest {
             source.configure(110, VideoCodec.H264, byteArrayOf(1)); assertNull(source.config)
             assertTrue(source.jpegNeeded)
         }
+        // JPEG is the fallback transport, but a valid codec config is still parsed so a /wc
+        // WebCodecs request can attach without requiring a separate settings change.
         val source = WebVideoSource(StreamTechnology.JPEG)
-        source.configure(110, VideoCodec.H264, avcc); assertNull(source.config)
+        source.configure(110, VideoCodec.H264, avcc); assertNotNull(source.config)
     }
 
     private fun hvcc() = ByteArray(23).apply {
@@ -63,7 +65,7 @@ class WebVideoSourceTest {
         }
         val jpeg = WebVideoSource(StreamTechnology.JPEG)
         jpeg.configure(110, VideoCodec.H265, hvcc())
-        assertNull(jpeg.config)
+        assertNotNull(jpeg.config)
     }
 
     @Test fun recoveryIsRateLimitedAndUsesTheCurrentStream() {
