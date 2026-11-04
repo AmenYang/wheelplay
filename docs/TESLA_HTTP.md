@@ -76,11 +76,11 @@
 
    ```sh
    adb push server.p12 /sdcard/server.p12
-   adb shell "run-as moe.feng.wheelplay mkdir -p files/no_backup"
-   adb shell "run-as moe.feng.wheelplay cp /sdcard/server.p12 files/no_backup/browser-server-custom.p12"
+   adb shell "run-as moe.feng.wheelplay mkdir -p no_backup"
+   adb shell "run-as moe.feng.wheelplay cp /sdcard/server.p12 no_backup/browser-server-custom.p12"
    ```
 
-   目录取自 `context.noBackupFilesDir`（`LanTls.customFile`）。debug 构建的包名多一个后缀，是 `moe.feng.wheelplay.debug`。读回来校验要用 `adb exec-out run-as ... cat`，`adb shell cat` 会做 CRLF 转换，字节数对不上。
+   目录取自 `context.noBackupFilesDir`（`LanTls.customFile`），即 `/data/data/<包名>/no_backup/`，注意**不是** `files/no_backup/`。debug 构建的包名多一个后缀，是 `moe.feng.wheelplay.debug`。读回来校验要用 `adb exec-out run-as ... cat`，`adb shell cat` 会做 CRLF 转换，字节数对不上。
 
 5. 车机浏览器打开 `https://amen811434.duckdns.org/wc`。这是正规 CA 签发的证书，车机不需要额外的信任操作，前提是车机系统时间正确。
 
