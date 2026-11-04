@@ -42,6 +42,9 @@ export function createBrowserAudio({
   let context = null, playback = false, microphone = false, connected = false;
   let playbackGeneration = 0, microphoneGeneration = 0;
   let desiredPlayback = false, desiredMicrophone = false, gestureRetry = false;
+  // Set once the user denies microphone permission: stop retrying on every `audio-route`
+  // push and only try again from an explicit user gesture (tap).
+  let micDenied = false;
   let mediaBufferMillis = 300;
   let stream = null, source = null, worklet = null, micId = null, micSequence = 0;
   const streams = new Map(), nodes = new Set();
@@ -75,10 +78,11 @@ export function createBrowserAudio({
       readyState(); state();
     } catch (error) { if (playbackGeneration === token) { playback = false; readyState(); state(error.message); } }
   }
-  async function setMicrophone(enabled) {
+  async function setMicrophone(enabled, fromGesture = false) {
     const token = ++microphoneGeneration;
     stopMicrophone(); microphone = false; readyState();
     if (!enabled) { state(); return; }
+    if (micDenied && !fromGesture) { state(); return; }
     try {
       if (!secure()) throw new Error(t("web_browser_microphones_require_trusted_https_open_the_https_address"));
       const audio = await ready();
@@ -99,10 +103,11 @@ export function createBrowserAudio({
       captured.getAudioTracks().forEach(track => { track.onended = () => {
         if (microphoneGeneration === token) { microphone = false; stopMicrophone(); readyState(); state(t("web_microphone_stopped_audio_input_has_returned_to_android")); }
       }; });
-      microphone = true; readyState(); state();
+      micDenied = false; microphone = true; readyState(); state();
     } catch (error) {
       if (microphoneGeneration !== token) return;
       stopMicrophone(); microphone = false; readyState();
+      if (error.name === 'NotAllowedError') micDenied = true;
       state(error.name === 'NotAllowedError' ? t("web_microphone_permission_denied_allow_this_site_to_use_the") : error.message);
     }
   }
@@ -164,7 +169,7 @@ export function createBrowserAudio({
   }
   function close() {
     playbackGeneration++; microphoneGeneration++; connected = false; microphone = playback = false;
-    desiredPlayback = desiredMicrophone = gestureRetry = false;
+    desiredPlayback = desiredMicrophone = gestureRetry = false; micDenied = false;
     mediaBufferMillis = 300;
     stopMicrophone(); stopPlayback();
     const old = context; context = null; old?.close().catch(() => {}); state();
@@ -175,7 +180,7 @@ export function createBrowserAudio({
       if (!connected || gestureRetry) return;
       gestureRetry = true;
       if (desiredPlayback && !playback) setPlayback(true);
-      if (desiredMicrophone && !microphone) setMicrophone(true);
+      if (desiredMicrophone && !microphone) setMicrophone(true, true);
     },
     get playback() { return playback; }, get microphone() { return microphone; },
   };

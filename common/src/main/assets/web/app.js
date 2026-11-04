@@ -980,10 +980,11 @@ if (typeof document !== 'undefined') {
       try { socket.send(packet); return true; } catch (_) { return false; }
     },
     onState: ({ error }) => {
-      $('audio-message').textContent = error;
+      $('audio-message-text').textContent = error;
       $('audio-message').hidden = !error || !paired;
     },
   });
+  $('audio-message-close').addEventListener('click', () => { $('audio-message').hidden = true; });
   document.addEventListener('pointerdown', () => browserAudio.unlock(), { capture: true });
   $('secure-setup').addEventListener('toggle', async () => {
     if (!$('secure-setup').open) return;
@@ -1009,11 +1010,13 @@ if (typeof document !== 'undefined') {
       if (!socket || socket.readyState !== WebSocket.OPEN || display.hidden) return;
       const rect = display.getBoundingClientRect();
       const zoom = ignoreZoomOption.checked ? window.visualViewport?.scale || 1 : 1;
-      // Negotiate at the CSS layout size, not device pixels. A received video
-      // that matches its layout box is composited once by the browser; the old
-      // devicePixelRatio factor made the host re-encode at ~1.5x and the browser
-      // scale it back down into the CSS box, which read as soft/misaligned.
-      const size = browserViewportSize(rect.width * zoom, rect.height * zoom);
+      // Negotiate at device pixels. The head-unit screen usually reports a
+      // devicePixelRatio > 1, so offering the CSS size alone would make the host
+      // encode at ~0.65x and the browser upscale it back into the CSS box, which
+      // reads as soft. Multiplying by devicePixelRatio keeps the surface 1:1 with
+      // the physical pixels.
+      const scale = (window.devicePixelRatio || 1) * zoom;
+      const size = browserViewportSize(rect.width * scale, rect.height * scale);
       if (!size) return;
       const { width, height } = size;
       const signature = `${width}x${height}`;
