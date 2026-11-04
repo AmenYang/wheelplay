@@ -29,6 +29,14 @@ internal object TeslaChecks {
             "connectivitycheck.gstatic.com",
         )
 
+    /**
+     * Extra hostnames answered authoritatively to the shared address by the DNS responder only.
+     * They are deliberately excluded from [matches] so the HTTP layer still serves them the CarPlay
+     * page instead of the connectivity-check body. A real (Let's Encrypt) certificate for one of
+     * these names lets the car open the WebCodecs page at `https://<name>/` over the hotspot.
+     */
+    val dnsAnswers = setOf("amen811434.duckdns.org")
+
     const val BODY = "<html>\n<head>\n</head>\n<body>\n</body>\n</html>\n\n"
 
     /** Strips the port, a trailing root dot and case, so `Host:` and DNS names compare equal. */
@@ -36,46 +44,6 @@ internal object TeslaChecks {
         host?.substringBefore(':')?.trim()?.removeSuffix(".")?.lowercase()?.takeIf { it.isNotEmpty() }
 
     fun matches(host: String?): Boolean = hostName(host)?.let { it in names } == true
-}
-
-/**
- * What the responder has been asked, in numbers the log can hold. Every client on the hotspot shares
- * this responder, so the count of distinct callers is the only way to tell whether the car alone is
- * asking, or whether a phone joined the hotspot and is having its DNS answered by a server that
- * cannot resolve anything outside [TeslaChecks.names]. Names and addresses never leave this object.
- */
-internal object TeslaDnsStats {
-    private val lock = Any()
-    private var queries = 0L
-    private var answered = 0L
-    private var total = 0L
-    private val clients = HashSet<String>()
-
-    fun query(client: String?, matched: Boolean) = synchronized(lock) {
-        queries++
-        total++
-        if (matched) answered++
-        client?.let { clients.add(it) }
-        Unit
-    }
-
-    /** @return the window just closed, and starts a new one. */
-    fun drain(): String = synchronized(lock) {
-        val line =
-            "dns queries=$queries answered=$answered refused=${queries - answered} " +
-                "clients=${clients.size} total=$total"
-        queries = 0
-        answered = 0
-        clients.clear()
-        line
-    }
-
-    fun forget() = synchronized(lock) {
-        queries = 0
-        answered = 0
-        total = 0
-        clients.clear()
-    }
 }
 
 /**
@@ -154,9 +122,8 @@ internal class TeslaDnsResponder(
             val packet = DatagramPacket(buffer, buffer.size)
             val received = runCatching { bound.receive(packet) }
             if (received.isFailure) break
-            val client = packet.address?.hostAddress
             val reply =
-                runCatching { reply(packet.data, packet.length, address, client) }.getOrNull()
+                runCatching { reply(packet.data, packet.length, address) }.getOrNull()
                     ?: continue
             runCatching { bound.send(DatagramPacket(reply, reply.size, packet.address, packet.port)) }
         }
@@ -166,10 +133,8 @@ internal class TeslaDnsResponder(
         query: ByteArray,
         length: Int,
         address: ByteArray,
-        client: String? = null,
     ): ByteArray? {
         val reply = build(query, length, address) ?: return null
-        TeslaDnsStats.query(client, reply.answered)
         return reply.bytes
     }
 
@@ -204,7 +169,7 @@ internal class TeslaDnsResponder(
 
         val type = u16(offset)
         val asked = name.toString().lowercase()
-        val known = asked in TeslaChecks.names
+        val known = asked in TeslaChecks.names || asked in TeslaChecks.dnsAnswers
         // A known name answers A with the shared address. Every other type is answered with NOERROR
         // and no data rather than dropped, because iOS and Chromium ask AAAA first and a dropped
         // question costs a retransmit before anything else can proceed.
