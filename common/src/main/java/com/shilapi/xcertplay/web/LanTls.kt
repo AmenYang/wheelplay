@@ -64,6 +64,11 @@ internal object LanTls {
     const val MAX_IMPORT_BYTES = 2 * 1024 * 1024
     private val provider = BouncyCastleProvider()
 
+    // An imported server identity must carry a non-empty password: the platform PKCS#12 provider
+    // rejects an empty password when it decrypts the PBES2 private key ("password empty"). The UI
+    // import path and the adb-pushed custom file both use this fixed password, so either works.
+    private val customPassword = "wheelplay".toCharArray()
+
     fun readImport(input: InputStream): ByteArray =
         ByteArrayOutputStream().use { output ->
             val buffer = ByteArray(8192)
@@ -90,8 +95,8 @@ internal object LanTls {
         val file = customFile(context)
         if (file.baseFile.exists()) {
             val store = KeyStore.getInstance("PKCS12")
-            file.openRead().use { store.load(it, CharArray(0)) }
-            return endpoint(store, "server", true)
+            file.openRead().use { store.load(it, customPassword) }
+            return endpoint(store, "server", true, customPassword)
         }
         return createDefault(context, addresses, hostname)
     }
@@ -141,12 +146,17 @@ internal object LanTls {
         return endpoint(leafStore, "server", false)
     }
 
-    private fun endpoint(store: KeyStore, alias: String, custom: Boolean): Endpoint {
+    private fun endpoint(
+        store: KeyStore,
+        alias: String,
+        custom: Boolean,
+        password: CharArray = CharArray(0),
+    ): Endpoint {
         val chain = store.getCertificateChain(alias).map { it as X509Certificate }
         chain.forEach { it.checkValidity() }
         val managers =
             KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply {
-                init(store, CharArray(0))
+                init(store, password)
             }
         val tls =
             SSLContext.getInstance("TLS").apply { init(managers.keyManagers, null, SecureRandom()) }
@@ -317,15 +327,15 @@ internal object LanTls {
         }
         val store =
             KeyStore.getInstance("PKCS12").apply {
-                load(null, CharArray(0))
-                setKeyEntry("server", key, CharArray(0), chain.toTypedArray())
+                load(null, customPassword)
+                setKeyEntry("server", key, customPassword, chain.toTypedArray())
             }
         val bytes =
             ByteArrayOutputStream().use {
-                store.store(it, CharArray(0))
+                store.store(it, customPassword)
                 it.toByteArray()
             }
-        return Prepared(bytes, endpoint(store, "server", true))
+        return Prepared(bytes, endpoint(store, "server", true, customPassword))
     }
 
     @Synchronized
