@@ -242,6 +242,9 @@ class AirPlaySession(
         val sent = sendCommandLocked(
             linkedMapOf("type" to "setNightMode", "params" to linkedMapOf("nightMode" to night)),
         )
+        // The command is fire and forget: write failure is all we can observe. Keep this line so a
+        // drive can tell "the host never asked" apart from "the iPhone ignored it".
+        Log.i(TAG, "setNightMode night=$night sent=$sent")
         if (sent) pendingNightMode = null
         return sent
     }

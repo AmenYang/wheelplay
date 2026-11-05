@@ -61,7 +61,7 @@ class DiPlaySessionService : Service() {
             if (night == systemNight) return
             systemNight = night
             Log.i(TAG, "system night mode -> $night")
-            WebSession.refreshAppearance(this@DiPlaySessionService)
+            WebSession.refreshAppearance(this@DiPlaySessionService, newConfig.uiMode)
         }
 
         override fun onLowMemory() {}

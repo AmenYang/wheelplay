@@ -4,10 +4,12 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import com.shilapi.xcertplay.AirPlayPersistence
 import com.shilapi.xcertplay.BrowserOfflinePolicy
 import com.shilapi.xcertplay.CarPlayAppearance
 import com.shilapi.xcertplay.projection.projectionSessions
+import com.shilapi.xcertplay.projection.ProjectionCommandResult
 import com.shilapi.xcertplay.projection.ProjectionContact
 import com.shilapi.xcertplay.projection.ProjectionSession
 import com.shilapi.xcertplay.projection.ProjectionInput
@@ -39,6 +41,7 @@ internal object WebSession {
 
     private var mediaSessionId = SecureRandom().nextLong().ushr(11)
     private var mediaEnded = true
+    private const val TAG = "WheelPlay-Web"
 
     /** One coherent configuration; a static source need not publish new frames. */
     @Synchronized fun mediaSnapshot(): MediaSnapshot {
@@ -234,14 +237,22 @@ internal object WebSession {
         refreshAppearance(context)
     }
 
-    fun refreshAppearance(context: Context) {
+    fun refreshAppearance(context: Context) =
+        refreshAppearance(context, context.resources.configuration.uiMode)
+
+    /**
+     * [uiMode] is passed in by whoever knows the configuration changed. Reading it back from
+     * `context.resources` would work only if the resources had already been swapped for this
+     * process, and the caller of a configuration change always knows first.
+     */
+    fun refreshAppearance(context: Context, uiMode: Int) {
         val controller = projectionSessions.snapshot() ?: return
+        val night = AirPlayPersistence.loadAppearance(context).night(isDarkMode(uiMode))
         preferenceExecutor.execute {
             if (projectionSessions.snapshot() === controller) {
-                val night =
-                    AirPlayPersistence.loadAppearance(context)
-                        .night(isDarkMode(context.resources.configuration.uiMode))
-                projectionSessions.setNightMode(controller, night)
+                val result = projectionSessions.setNightMode(controller, night)
+                if (result != ProjectionCommandResult.SENT)
+                    Log.i(TAG, "night mode $night not sent: $result")
             }
         }
     }

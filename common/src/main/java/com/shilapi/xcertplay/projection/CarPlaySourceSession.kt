@@ -9,9 +9,18 @@ internal class CarPlaySourceSession(private val status: () -> String?) : Project
     @Volatile private var sink: com.shilapi.xcertplay.media.AndroidMediaSink? = null
     private val closed = CompletableFuture<Unit>()
     @Volatile private var stopping = false
+
+    /**
+     * The appearance is decided as soon as a session is published, which can be before the AirPlay
+     * controller exists. Holding the value here means a connect that starts at night ends up at
+     * night instead of opening with whatever the iPhone had cached.
+     */
+    @Volatile private var pendingNight: Boolean? = null
+
     fun bind(controller: com.shilapi.xcertplay.orchestration.CarPlayController?, sink: com.shilapi.xcertplay.media.AndroidMediaSink?) {
         this.controller = controller
         this.sink = sink
+        if (controller != null) pendingNight?.let { if (controller.setNightMode(it)) pendingNight = null }
         projectionSessions.changed(this)
     }
     fun completed(clean: Boolean) {
@@ -44,8 +53,12 @@ internal class CarPlaySourceSession(private val status: () -> String?) : Project
         }) ?: false
     }
     override fun cancelInput(reason: ProjectionCancelReason) = touch(emptyList())
-    override fun setNightMode(night: Boolean) =
-        if (controller?.setNightMode(night) == true) ProjectionCommandResult.SENT else ProjectionCommandResult.UNAVAILABLE
+    override fun setNightMode(night: Boolean): ProjectionCommandResult {
+        pendingNight = night
+        if (controller?.setNightMode(night) != true) return ProjectionCommandResult.UNAVAILABLE
+        pendingNight = null
+        return ProjectionCommandResult.SENT
+    }
     override fun stop(): CompletableFuture<Unit> {
         stopping = true
         CarPlayBackgroundSession.stop()
