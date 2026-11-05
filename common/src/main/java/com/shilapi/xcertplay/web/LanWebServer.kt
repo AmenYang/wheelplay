@@ -139,6 +139,10 @@ internal class LanWebServer(
     }
 
     override fun serve(session: IHTTPSession): Response {
+        // Any request means somebody is using the server again. The foreground service holds its
+        // wake lock only while something is being streamed, so it has to learn about the first
+        // request after an idle night. Throttled inside WebSession.
+        WebSession.noteInboundActivity()
         // The car's connectivity check arrives here because TeslaDnsResponder points those names at
         // the shared address. Answer it before anything else so a hotspot without internet is
         // accepted instead of refused.

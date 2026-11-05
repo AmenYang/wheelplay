@@ -156,6 +156,8 @@ internal object WebSession {
         get() = browserViewport
 
     @Volatile private var browserViewportListener: ((Int?, Int?) -> Unit)? = null
+    @Volatile private var activityListener: (() -> Unit)? = null
+    @Volatile private var lastActivitySignal = 0L
     @Volatile private var inputSession: ProjectionSession? = null
     val maxTouchContacts get() = projectionSessions.snapshot()?.capabilities?.maxTouchContacts ?: 0
     val touch = TouchLease(maxContacts = { maxTouchContacts }, sendInput = { event ->
@@ -214,6 +216,8 @@ internal object WebSession {
                     AirPlayPersistence.loadBrowserOfflinePolicy(it).timeoutMillis
                 )
             }
+            // Sessions come and go on the main thread; whoever holds a wake lock needs to know.
+            activityListener?.invoke()
             Unit
         }
         if (Looper.myLooper() == Looper.getMainLooper()) refresh()
@@ -718,6 +722,27 @@ internal object WebSession {
         adaptiveBrowserSize = enabled
         val size = if (enabled) browserViewport else null
         browserViewportListener?.invoke(size?.first, size?.second)
+    }
+
+    /**
+     * Fires whenever a viewer attaches or detaches, and whenever the projection session changes.
+     * The foreground service uses it to hold a wake lock only while something is actually being
+     * streamed, instead of for the whole life of the process.
+     */
+    fun setSessionActivityListener(listener: (() -> Unit)?) {
+        activityListener = listener
+        listener?.invoke()
+    }
+
+    /**
+     * Cheap signal from the request path. Throttled here so a page load with thirty subresources
+     * wakes the listener once, not thirty times.
+     */
+    fun noteInboundActivity() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastActivitySignal < 5_000L) return
+        lastActivitySignal = now
+        activityListener?.invoke()
     }
 
     fun setBrowserViewportListener(listener: ((Int?, Int?) -> Unit)?) {
