@@ -197,7 +197,9 @@ function open() {
     stage.hidden = false;
     showHud();
     lastViewportSignature = '';
+    lastReportedDark = null;
     scheduleViewportReport();
+    reportAppearance();
     audio.attach();
     // Audio routing is one-way: the host pushes `audio-route`, and the page only reports readiness
     // through `audio-ready`. Sending `audio-route` here is an unknown control message and the host
@@ -348,6 +350,23 @@ function showHud() {
 // the CarPlay source is rendered at the head unit's own aspect ratio instead of letterboxing.
 let viewportTimer = null;
 let lastViewportSignature = '';
+
+// The head unit's own dark/light theme is what the driver is looking at. A car usually flips it
+// from the headlights rather than from sunset, so it is a better answer to "is CarPlay dark?"
+// than the phone's uiMode is. Report it whenever it changes, and let the host do the asking.
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+let lastReportedDark = null;
+
+function reportAppearance() {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  const dark = darkQuery.matches;
+  if (dark === lastReportedDark) return;
+  lastReportedDark = dark;
+  send({ type: 'appearance', dark });
+}
+
+if (darkQuery.addEventListener) darkQuery.addEventListener('change', reportAppearance);
+else darkQuery.addListener?.(reportAppearance);
 
 function browserViewportSize(width, height) {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;

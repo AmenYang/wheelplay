@@ -192,6 +192,16 @@ internal object WebSession {
     val location = BrowserLocationBridge()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var experienceContext: Context? = null
+
+    /**
+     * What the head-unit page says its own theme is, or null when nothing is watching.
+     *
+     * The page on the car screen is the thing the driver is actually looking at, and its
+     * `prefers-color-scheme` follows the car's display mode, which is driven by the headlights
+     * rather than by sunrise. When it is known it beats the phone's own uiMode; when the last
+     * viewer leaves it is forgotten so a parked phone falls back to its own setting.
+     */
+    @Volatile private var browserDark: Boolean? = null
     private var offlineSubscription: AutoCloseable? = null
     private val preferenceExecutor =
         java.util.concurrent.Executors.newSingleThreadExecutor { task ->
@@ -218,6 +228,12 @@ internal object WebSession {
                 offlineMonitor.refresh(
                     AirPlayPersistence.loadBrowserOfflinePolicy(it).timeoutMillis
                 )
+            }
+            // The head unit's theme only speaks for the head unit. Once the car browser is gone,
+            // a phone that was left on the passenger seat goes back to its own setting.
+            if (browserDark != null && !hasViewer) {
+                browserDark = null
+                experienceContext?.let(::refreshAppearance)
             }
             // Sessions come and go on the main thread; whoever holds a wake lock needs to know.
             activityListener?.invoke()
@@ -247,7 +263,7 @@ internal object WebSession {
      */
     fun refreshAppearance(context: Context, uiMode: Int) {
         val controller = projectionSessions.snapshot() ?: return
-        val night = AirPlayPersistence.loadAppearance(context).night(isDarkMode(uiMode))
+        val night = nightModeFor(context, uiMode)
         preferenceExecutor.execute {
             if (projectionSessions.snapshot() === controller) {
                 val result = projectionSessions.setNightMode(controller, night)
@@ -255,6 +271,24 @@ internal object WebSession {
                     Log.i(TAG, "night mode $night not sent: $result")
             }
         }
+    }
+
+    /**
+     * A forced day/night preference is the user's own decision and wins. "Follow the system"
+     * means the head unit once it has said something, and the phone when it has not.
+     */
+    private fun nightModeFor(context: Context, uiMode: Int): Boolean {
+        val appearance = AirPlayPersistence.loadAppearance(context)
+        if (appearance != CarPlayAppearance.SYSTEM) return appearance.night(isDarkMode(uiMode))
+        return browserDark ?: isDarkMode(uiMode)
+    }
+
+    /** The page reports `prefers-color-scheme`, which on a car follows the headlights. */
+    fun reportBrowserAppearance(dark: Boolean) {
+        if (browserDark == dark) return
+        browserDark = dark
+        Log.i(TAG, "head unit reports dark=$dark")
+        experienceContext?.let(::refreshAppearance)
     }
 
     private fun configureAudio(context: Context) {

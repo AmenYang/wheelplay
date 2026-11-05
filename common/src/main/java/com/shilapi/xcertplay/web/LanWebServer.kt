@@ -859,6 +859,11 @@ internal class LanWebServer(
                         val height = data.getInt("height")
                         require(WebSession.reportBrowserViewport(width, height))
                     }
+                    // The car browser knows whether the screen it is on is dark, which is the
+                    // question CarPlay's day/night actually asks. Android's own uiMode is only a
+                    // guess at it, and a guess made on a phone in a bag.
+                    "appearance" ->
+                        if (data.has("dark")) WebSession.reportBrowserAppearance(data.getBoolean("dark"))
                     "ping" -> {
                         // Match service-stop lock ordering: take the session snapshot first.
                         val media = WebSession.mediaSnapshot()

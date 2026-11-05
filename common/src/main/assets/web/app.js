@@ -1027,6 +1027,18 @@ if (typeof document !== 'undefined') {
   }
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(scheduleViewportReport).observe(display);
   window.addEventListener('resize', scheduleViewportReport);
+  // The head unit's own theme follows the headlights, not the phone's clock. Tell the host what
+  // it is whenever it flips, so CarPlay can be asked to match the screen it is drawn on.
+  const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  let lastReportedDark = null;
+  function reportAppearance() {
+    const dark = darkQuery.matches;
+    if (dark === lastReportedDark) return;
+    lastReportedDark = dark;
+    send({ type: 'appearance', dark });
+  }
+  if (darkQuery.addEventListener) darkQuery.addEventListener('change', reportAppearance);
+  else darkQuery.addListener?.(reportAppearance);
   for (const event of ['resize', 'scroll']) window.visualViewport?.addEventListener(event, () => {
     if (!ignoreZoomOption.checked) return;
     syncDisplayZoom(); scheduleViewportReport();
@@ -1182,6 +1194,8 @@ if (typeof document !== 'undefined') {
       $('topbar').hidden = $('hide-toolbar').checked || Boolean(launchPresentation?.immersive);
       lastViewportSignature = '';
       scheduleViewportReport();
+      lastReportedDark = null;
+      reportAppearance();
       $('status').textContent = t("web_connected_waiting_for_video");
       send({ type: 'ping' });
       clearInterval(heartbeat);
