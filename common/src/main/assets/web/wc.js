@@ -200,6 +200,7 @@ function open() {
     lastReportedDark = null;
     scheduleViewportReport();
     reportAppearance();
+    watchAppearance(true);
     audio.attach();
     // Audio routing is one-way: the host pushes `audio-route`, and the page only reports readiness
     // through `audio-ready`. Sending `audio-route` here is an unknown control message and the host
@@ -224,6 +225,7 @@ function open() {
   ws.onclose = () => {
     clearTimeout(connectTimer);
     clearInterval(heartbeat);
+    watchAppearance(false);
     if (socket !== ws) return;
     socket = null;
     player.close();
@@ -356,6 +358,7 @@ let lastViewportSignature = '';
 // than the phone's uiMode is. Report it whenever it changes, and let the host do the asking.
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
 let lastReportedDark = null;
+let appearanceTimer = null;
 
 function reportAppearance() {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
@@ -365,8 +368,23 @@ function reportAppearance() {
   send({ type: 'appearance', dark });
 }
 
+/* A head-unit browser updates this value when the headlights decide the screen is dark, but it
+ * does not reliably turn that into a `change` event, and a page that is not in front is not
+ * resumed at all. Reading it on a timer cannot miss the transition; the event stays as the fast
+ * path for browsers that do dispatch it. */
+function watchAppearance(on) {
+  if (appearanceTimer !== null) {
+    window.clearInterval(appearanceTimer);
+    appearanceTimer = null;
+  }
+  if (on) appearanceTimer = window.setInterval(reportAppearance, 1000);
+}
+
 if (darkQuery.addEventListener) darkQuery.addEventListener('change', reportAppearance);
 else darkQuery.addListener?.(reportAppearance);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) reportAppearance(); });
+window.addEventListener('focus', reportAppearance);
+window.addEventListener('pageshow', reportAppearance);
 
 function browserViewportSize(width, height) {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
@@ -469,6 +487,7 @@ $('connect-form').addEventListener('submit', async event => {
 window.addEventListener('pagehide', () => {
   closing = true;
   clearInterval(heartbeat);
+  watchAppearance(false);
   try {
     socket?.close();
   } catch (_) {}

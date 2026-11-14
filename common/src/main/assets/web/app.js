@@ -1032,13 +1032,33 @@ if (typeof document !== 'undefined') {
   const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
   let lastReportedDark = null;
   function reportAppearance() {
+    if (!outbox) return;
     const dark = darkQuery.matches;
     if (dark === lastReportedDark) return;
     lastReportedDark = dark;
     send({ type: 'appearance', dark });
   }
+  /* Some head-unit browsers update the value but never fire `change`, and a page that is not in
+   * front may not be resumed at all, so read it on a timer as well. One read per second is a
+   * media-query lookup, not a layout. The timer only exists while a connection does: it stops
+   * itself on the first tick after the outbox is gone, so a parked page costs nothing. */
+  let appearanceTimer = null;
+  function pollAppearance() {
+    if (!outbox) {
+      clearInterval(appearanceTimer);
+      appearanceTimer = null;
+      return;
+    }
+    reportAppearance();
+  }
+  function startAppearanceWatch() {
+    if (appearanceTimer === null) appearanceTimer = setInterval(pollAppearance, 1000);
+  }
   if (darkQuery.addEventListener) darkQuery.addEventListener('change', reportAppearance);
   else darkQuery.addListener?.(reportAppearance);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) reportAppearance(); });
+  window.addEventListener('focus', reportAppearance);
+  window.addEventListener('pageshow', reportAppearance);
   for (const event of ['resize', 'scroll']) window.visualViewport?.addEventListener(event, () => {
     if (!ignoreZoomOption.checked) return;
     syncDisplayZoom(); scheduleViewportReport();
@@ -1196,6 +1216,7 @@ if (typeof document !== 'undefined') {
       scheduleViewportReport();
       lastReportedDark = null;
       reportAppearance();
+      startAppearanceWatch();
       $('status').textContent = t("web_connected_waiting_for_video");
       send({ type: 'ping' });
       clearInterval(heartbeat);
