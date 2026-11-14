@@ -233,6 +233,7 @@ internal object WebSession {
             // a phone that was left on the passenger seat goes back to its own setting.
             if (browserDark != null && !hasViewer) {
                 browserDark = null
+                Log.i(TAG, "head unit left, back to the phone's own appearance")
                 experienceContext?.let(::refreshAppearance)
             }
             // Sessions come and go on the main thread; whoever holds a wake lock needs to know.
@@ -410,8 +411,12 @@ internal object WebSession {
                     server?.disconnectViewer()
                     secureServer?.disconnectViewer()
                     configureAudio(context)
-                    refreshAppearance(context)
                 }
+                // Every publish, not only a source switch: the session becomes usable a moment
+                // after it is published, and the appearance chosen before that moment has to be
+                // re-asserted once it lands. Duplicates cost nothing — the session remembers what
+                // the controller already knows.
+                refreshAppearance(context)
                 viewerStateChanged()
             }
             httpsPort = WebListenSettings.httpsPort(context)

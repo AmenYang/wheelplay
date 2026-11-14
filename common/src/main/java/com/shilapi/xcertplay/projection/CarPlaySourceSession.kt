@@ -17,10 +17,21 @@ internal class CarPlaySourceSession(private val status: () -> String?) : Project
      */
     @Volatile private var pendingNight: Boolean? = null
 
+    /** What this controller already knows, so a re-asserted appearance costs nothing. */
+    @Volatile private var sentNight: Boolean? = null
+
     fun bind(controller: com.shilapi.xcertplay.orchestration.CarPlayController?, sink: com.shilapi.xcertplay.media.AndroidMediaSink?) {
         this.controller = controller
         this.sink = sink
-        if (controller != null) pendingNight?.let { if (controller.setNightMode(it)) pendingNight = null }
+        sentNight = null
+        if (controller != null) {
+            pendingNight?.let {
+                if (controller.setNightMode(it)) {
+                    pendingNight = null
+                    sentNight = it
+                }
+            }
+        }
         projectionSessions.changed(this)
     }
     fun completed(clean: Boolean) {
@@ -55,7 +66,14 @@ internal class CarPlaySourceSession(private val status: () -> String?) : Project
     override fun cancelInput(reason: ProjectionCancelReason) = touch(emptyList())
     override fun setNightMode(night: Boolean): ProjectionCommandResult {
         pendingNight = night
-        if (controller?.setNightMode(night) != true) return ProjectionCommandResult.UNAVAILABLE
+        val target = controller ?: return ProjectionCommandResult.UNAVAILABLE
+        // Callers re-assert the appearance whenever the session publishes; only a change is news.
+        if (sentNight == night) {
+            pendingNight = null
+            return ProjectionCommandResult.SENT
+        }
+        if (!target.setNightMode(night)) return ProjectionCommandResult.UNAVAILABLE
+        sentNight = night
         pendingNight = null
         return ProjectionCommandResult.SENT
     }
